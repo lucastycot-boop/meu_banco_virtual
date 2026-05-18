@@ -1,8 +1,8 @@
-import os
 import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 
 st.set_page_config(page_title="Meu Banco Digital", page_icon="💰", layout="centered")
@@ -40,6 +40,20 @@ def init_database():
                 valor REAL NOT NULL,
                 descricao TEXT,
                 data_hora TEXT NOT NULL,
+                FOREIGN KEY(usuario) REFERENCES contas(usuario)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS emprestimos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                usuario TEXT NOT NULL,
+                data_hora TEXT NOT NULL,
+                valor_puro REAL NOT NULL,
+                total_com_juros REAL NOT NULL,
+                parcelas INTEGER NOT NULL,
+                divida_restante REAL NOT NULL,
                 FOREIGN KEY(usuario) REFERENCES contas(usuario)
             )
             """
@@ -87,6 +101,50 @@ def add_transaction(usuario, tipo, valor, descricao):
             (usuario, tipo, valor, descricao, datetime.now().isoformat()),
         )
 
+def create_loan_in_db(usuario, valor_puro, total_com_juros, parcelas):
+    with get_db_connection() as conn:
+        conn.execute(
+            "INSERT INTO emprestimos (usuario, data_hora, valor_puro, total_com_juros, parcelas, divida_restante) VALUES (?, ?, ?, ?, ?, ?)",
+            (usuario, datetime.now().isoformat(), valor_puro, total_com_juros, parcelas, total_com_juros),
+        )
+
+def fetch_users_df():
+    with get_db_connection() as conn:
+        rows = conn.execute("SELECT usuario, role, ganhos, gastos, limite_emprestimo, divida_emprestimo FROM contas ORDER BY usuario").fetchall()
+    if not rows:
+        return pd.DataFrame(columns=["usuario", "role", "ganhos", "gastos", "limite_emprestimo", "divida_emprestimo"])
+    return pd.DataFrame([dict(row) for row in rows])
+
+def fetch_transactions_df(usuario=None):
+    sql = "SELECT * FROM transacoes"
+    params = ()
+    if usuario:
+        sql += " WHERE usuario = ?"
+        params = (usuario,)
+    with get_db_connection() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    if not rows:
+        return pd.DataFrame(columns=["id", "usuario", "tipo", "valor", "descricao", "data_hora"])
+    return pd.DataFrame([dict(row) for row in rows])
+
+def fetch_loans_df(usuario=None):
+    sql = "SELECT * FROM emprestimos"
+    params = ()
+    if usuario:
+        sql += " WHERE usuario = ?"
+        params = (usuario,)
+    with get_db_connection() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    if not rows:
+        return pd.DataFrame(columns=["id", "usuario", "data_hora", "valor_puro", "total_com_juros", "parcelas", "divida_restante"])
+    return pd.DataFrame([dict(row) for row in rows])
+
+def delete_user(usuario):
+    with get_db_connection() as conn:
+        conn.execute("DELETE FROM transacoes WHERE usuario = ?", (usuario,))
+        conn.execute("DELETE FROM emprestimos WHERE usuario = ?", (usuario,))
+        conn.execute("DELETE FROM contas WHERE usuario = ?", (usuario,))
+
 # Função auxiliar para avançar os meses nas datas de vencimento
 def adicionar_meses(data_base, meses):
     ano = data_base.year + (data_base.month + meses - 1) // 12
@@ -96,52 +154,58 @@ def adicionar_meses(data_base, meses):
 
 def meu_banco_digital():
     init_database()
-
-    if "limite_padrao_novos_usuarios" not in st.session_state:
-        st.session_state.limite_padrao_novos_usuarios = 2000.0
+    st.set_page_config(page_title="Apex Banco Digital", page_icon="🔱", layout="wide")
+    st.title("🔱 Apex | Sistema Bancário Inteligente")
 
     if "logado" not in st.session_state:
         st.session_state.logado = False
     if "usuario_atual" not in st.session_state:
         st.session_state.usuario_atual = None
+    if "limite_padrao" not in st.session_state:
+        st.session_state.limite_padrao = 2000.0
 
-    # 2. TELA DE ACESSO (LOGIN E CADASTRO)
     if not st.session_state.logado:
-        st.title("🔒 Banco Pessoal - Controle de Acesso")
-        aba_login, aba_cadastro = st.tabs(["Entrar", "Criar Nova Conta"])
-        
-        with aba_login:
-            usuario_input = st.text_input("Usuário", key="login_user")
-            senha_input = st.text_input("Senha", type="password", key="login_pass")
-            if st.button("Entrar", use_container_width=True):
-                if authenticate_user(usuario_input, senha_input):
-                    st.session_state.logado = True
-                    st.session_state.usuario_atual = usuario_input
-                    st.success("Login realizado com sucesso!")
-                    st.rerun()
-                else:
-                    st.error("Usuário ou senha incorretos!")
-        
-        with aba_cadastro:
-            novo_usuario = st.text_input("Escolha um Nome de Usuário", key="cad_user")
-            nova_senha = st.text_input("Escolha uma Senha", type="password", key="cad_pass")
-            confirma_senha = st.text_input("Confirme a Senha", type="password", key="cad_conf_pass")
-            if st.button("Criar Minha Conta", use_container_width=True):
-                if not novo_usuario or not nova_senha:
-                    st.warning("Preencha todos os campos!")
-                elif fetch_user(novo_usuario):
-                    st.error("Esse usuário já existe! Escolha outro nome.")
-                elif nova_senha != confirma_senha:
-                    st.error("As senhas não coincidem!")
-                else:
-                    limite_inicial = st.session_state.limite_padrao_novos_usuarios
-                    create_user_in_db(novo_usuario, nova_senha, "usuario", limite_inicial)
-                    st.success(f"Conta criada com sucesso com limite de R$ {limite_inicial:,.2f}!")
+        col_cen, col_box, col_dir = st.columns([1, 2, 1])
+        with col_box:
+            st.markdown("### 🔒 Controle de Acesso")
+            aba_login, aba_cadastro = st.tabs(["🔑 Entrar", "📝 Criar Nova Conta"])
+
+            with aba_login:
+                u_input = st.text_input("Usuário", key="l_user").strip()
+                s_input = st.text_input("Senha", type="password", key="l_pass").strip()
+                if st.button("Acessar Banco", use_container_width=True, type="primary", key="btn_executar_login"):
+                    if authenticate_user(u_input, s_input):
+                        st.session_state.logado = True
+                        st.session_state.usuario_atual = u_input
+                        st.success("Login realizado com sucesso!")
+                        st.rerun()
+                    else:
+                        st.error("Usuário ou senha incorretos!")
+
+            with aba_cadastro:
+                n_user = st.text_input("Nome de Usuário", key="c_user").strip()
+                n_pass = st.text_input("Senha de Acesso", type="password", key="c_pass").strip()
+                c_pass = st.text_input("Confirme a Senha", type="password", key="c_cpass").strip()
+                if st.button("Cadastrar no Sistema", use_container_width=True, key="btn_executar_cadastro"):
+                    if not n_user or not n_pass:
+                        st.warning("Preencha todos os campos!")
+                    elif fetch_user(n_user):
+                        st.error("Este usuário já existe!")
+                    elif n_pass != c_pass:
+                        st.error("As senhas não batem!")
+                    else:
+                        create_user_in_db(n_user, n_pass, "usuario", st.session_state.limite_padrao)
+                        st.success("Conta criada com sucesso! Vá para a aba 'Entrar'.")
 
     # 3. PAINEL DO BANCO (APÓS LOGIN)
     else:
         user = st.session_state.usuario_atual
         dados_user = fetch_user(user)
+        df_users = fetch_users_df()
+        df_transacoes = fetch_transactions_df()
+        df_loans = fetch_loans_df()
+        df_transacoes_user = fetch_transactions_df(user)
+        df_loans_user = fetch_loans_df(user)
 
         st.title(f"💰 Olá, {user}!")
         
@@ -150,144 +214,148 @@ def meu_banco_digital():
             st.session_state.usuario_atual = None
             st.rerun()
 
-        # --- VISÃO DO DESENVOLVEDOR ---
         if dados_user["role"] == "desenvolvedor":
-            st.sidebar.markdown("---")
-            st.sidebar.subheader("🛠️ Modo Desenvolvedor")
-            novo_limite_config = st.sidebar.number_input("Limite para Novos Cadastros (R$)", min_value=0.0, value=st.session_state.limite_padrao_novos_usuarios, step=100.0)
-            st.session_state.limite_padrao_novos_usuarios = novo_limite_config
-            
-            ver_painel = st.sidebar.checkbox("Monitorar Contas", value=True)
-            if ver_painel:
-                st.header("🖥️ Painel Geral (Dev)")
-                
-                # Tabela de monitoramento
-                lista_contas = []
-                usuarios_com_divida = [] # Lista auxiliar para o formulário de abatimento
-                contas = fetch_all_users()
-                
-                if contas:
-                    for dados in contas:
-                        lista_contas.append({
-                            "Usuário": dados['usuario'],
-                            "Saldo": f"R$ {dados['ganhos'] - dados['gastos']:,.2f}",
-                            "Ganhos": f"R$ {dados['ganhos']:,.2f}",
-                            "Gastos": f"R$ {dados['gastos']:,.2f}",
-                            "Limite Emprést.": f"R$ {dados['limite_emprestimo']:,.2f}",
-                            "Dívida Atual": f"R$ {dados['divida_emprestimo']:,.2f}"
-                        })
-                        if dados['divida_emprestimo'] > 0:
-                            usuarios_com_divida.append(dados['usuario'])
-                    st.table(lista_contas)
-                else:
-                    st.info("Nenhuma conta cadastrada ainda.")
-                
-                # NOVO: FORMULÁRIO DE ABATIMENTO DE DÍVIDA (Apenas visível se alguém dever)
-                st.subheader("🧮 Registrar Recebimento de Empréstimo")
-                if usuarios_com_divida:
-                    col_dev1, col_dev2 = st.columns(2)
-                    with col_dev1:
-                        user_pagando = st.selectbox("Qual cliente está pagando?", usuarios_com_divida)
-                    with col_dev2:
-                        cliente_atual = fetch_user(user_pagando)
-                        divida_maxima = cliente_atual['divida_emprestimo']
-                        valor_pago = st.number_input(f"Valor Pago por {user_pagando} (Máx R$ {divida_maxima:.2f})", min_value=0.0, max_value=divida_maxima, step=10.0, key="valor_pago")
-                    
-                    if st.button("Confirmar Abatimento", type="secondary", key="confirmar_abatimento"):
-                        if valor_pago > 0:
-                            valor_proporcional_sem_juros = valor_pago / 1.05
-                            update_user_in_db(
-                                user_pagando,
-                                divida_emprestimo=cliente_atual['divida_emprestimo'] - valor_pago,
-                                limite_emprestimo=cliente_atual['limite_emprestimo'] + valor_proporcional_sem_juros,
-                            )
-                            add_transaction(user_pagando, "pagamento_emprestimo", valor_pago, "Abatimento de dívida")
-                            st.success(f"✅ Sucesso! R$ {valor_pago:.2f} foram abatidos da dívida de {user_pagando}.")
-                            st.rerun()
-                else:
-                    st.info("Nenhum cliente possui dívidas ativas no momento.")
-                    
-                st.divider()
+            st.sidebar.success("⚡ Administrador Ativo")
+            st.header("🛠️ Painel de Controle Admin")
 
-        # --- SEÇÃO FINANCEIRA DO USUÁRIO ---
-        saldo_atual = dados_user["ganhos"] - dados_user["gastos"]
-        
-        col_s1, col_s2 = st.columns(2)
-        col_s1.metric(label="Saldo Atual Disponível", value=f"R$ {saldo_atual:,.2f}")
-        if dados_user["divida_emprestimo"] > 0:
-            col_s2.metric(label="⚠️ Dívida de Empréstimo", value=f"R$ {dados_user['divida_emprestimo']:,.2f}", delta="Com 5% juros/parc.")
+            tab_usuarios, tab_transacoes_adm, tab_emprestimos_adm = st.tabs(["👥 Gerenciar Clientes", "📊 Extrato Geral", "🏦 Créditos Ativos"])
+
+            with tab_usuarios:
+                st.markdown("##### Todos os Usuários Registrados")
+                st.dataframe(df_users, use_container_width=True)
+
+                st.markdown("#### ⚙️ Alterar Limite de Crédito")
+                lista_clientes = df_users[df_users["role"] != "desenvolvedor"]["usuario"].tolist()
+                if lista_clientes:
+                    u_limite = st.selectbox("Selecione o Cliente:", lista_clientes, key="sel_u_limite")
+                    usuario_linha = fetch_user(u_limite)
+                    lim_atual = float(usuario_linha["limite_emprestimo"])
+                    novo_limite = st.number_input(f"Novo Limite (Atual: R$ {lim_atual:,.2f}):", min_value=0.0, step=100.0, value=lim_atual, key="novo_limite")
+                    if st.button("Aplicar Novo Limite", type="primary", key="btn_mudar_limite_adm"):
+                        update_user_in_db(u_limite, limite_emprestimo=novo_limite)
+                        st.success("Limite modificado com sucesso!")
+                        st.rerun()
+                else:
+                    st.info("Nenhum cliente cadastrado.")
+
+                st.markdown("#### ❌ Excluir Conta de Cliente")
+                if lista_clientes:
+                    user_excluir = st.selectbox("Selecione a conta para deletar:", lista_clientes, key="sel_u_excluir")
+                    if st.button("Confirmar Exclusão Definitiva", key="btn_deletar_conta_adm"):
+                        delete_user(user_excluir)
+                        st.success("Conta removida de forma permanente!")
+                        st.rerun()
+                else:
+                    st.info("Nenhuma conta disponível para exclusão.")
+
+            with tab_transacoes_adm:
+                st.dataframe(df_transacoes, use_container_width=True)
+
+            with tab_emprestimos_adm:
+                st.dataframe(df_loans, use_container_width=True)
         else:
-            col_s2.metric(label="👍 Situação de Empréstimo", value="Sem dívidas")
+            ganhos_totais = pd.to_numeric(df_transacoes_user[df_transacoes_user["tipo"] == "Ganho"]["valor"]).sum() if not df_transacoes_user.empty else 0.0
+            gastos_totais = pd.to_numeric(df_transacoes_user[df_transacoes_user["tipo"] == "Gasto"]["valor"]).sum() if not df_transacoes_user.empty else 0.0
+            divida_atual = pd.to_numeric(df_loans_user["divida_restante"]).sum() if not df_loans_user.empty else 0.0
+            saldo_real = dados_user["ganhos"] - dados_user["gastos"]
+            limite_disponivel = max(0.0, dados_user["limite_emprestimo"])
 
-        col1, col2 = st.columns(2)
-        col1.metric(label="📈 Total de Ganhos", value=f"R$ {dados_user['ganhos']:,.2f}")
-        col2.metric(label="📉 Total de Gastos", value=f"R$ -{dados_user['gastos']:,.2f}", delta_color="inverse")
+            st.markdown(f"### 👋 Olá, **{user}**")
+            col1, col2, col3 = st.columns(3)
+            col1.metric("🟢 SALDO DISPONÍVEL", f"R$ {saldo_real:,.2f}")
+            col2.metric("🔴 DÍVIDA CONSOLIDADA", f"R$ {divida_atual:,.2f}")
+            col3.metric("🔵 LINHA DE CRÉDITO", f"R$ {limite_disponivel:,.2f}")
 
-        st.divider()
+            st.divider()
+            tab_movimentar, tab_analytics, tab_credito = st.tabs(["💸 Nova Transação", "📊 Resumo por Categorias", "🏛️ Empréstimos"])
 
-        # --- FORMULÁRIOS PARA ADICIONAR DINHEIRO/GASTOS ---
-        st.subheader("💵 Nova Movimentação")
-        col_ganho, col_gasto = st.columns(2)
-        
-        with col_ganho:
-            st.markdown("### Registrar Entrada")
-            valor_ganho = st.number_input("Valor do Ganho (R$)", min_value=0.0, step=10.0, key="add_ganho")
-            if st.button("Confirmar Depósito", key="confirmar_deposito"):
-                if valor_ganho > 0:
-                    update_user_in_db(user, ganhos=dados_user['ganhos'] + valor_ganho)
-                    add_transaction(user, "deposito", valor_ganho, "Depósito de entrada")
-                    st.success(f"R$ {valor_ganho:.2f} adicionados!")
-                    st.rerun()
+            with tab_movimentar:
+                col_ganho, col_gasto = st.columns(2)
+                with col_ganho:
+                    st.markdown("#### 📈 Lançar Entrada")
+                    area_ganho = st.text_input("Classificação (Ex: Salário, Mesada)", key="a_ganho").strip().capitalize()
+                    val_ganho = st.number_input("Valor Recebido (R$)", min_value=0.0, step=10.0, key="v_ganho")
+                    if st.button("Registrar Entrada", use_container_width=True, key="btn_salvar_entrada_cli"):
+                        if val_ganho > 0 and area_ganho:
+                            add_transaction(user, "Ganho", val_ganho, area_ganho)
+                            update_user_in_db(user, ganhos=dados_user["ganhos"] + val_ganho)
+                            st.success("Ganho registrado com sucesso!")
+                            st.rerun()
+                        else:
+                            st.warning("Informe valor e classificação.")
 
-        with col_gasto:
-            st.markdown("### Registrar Saída")
-            valor_gasto = st.number_input("Valor do Gasto (R$)", min_value=0.0, step=10.0, key="add_gasto")
-            if st.button("Confirmar Gasto", key="confirmar_gasto"):
-                if valor_gasto > 0:
-                    update_user_in_db(user, gastos=dados_user['gastos'] + valor_gasto)
-                    add_transaction(user, "gasto", valor_gasto, "Registro de gasto")
-                    st.success(f"Gasto de R$ {valor_gasto:.2f} registrado!")
-                    st.rerun()
+                with col_gasto:
+                    st.markdown("#### 📉 Lançar Saída")
+                    area_gasto = st.text_input("Classificação (Ex: Roupa, Lanche)", key="a_gasto").strip().capitalize()
+                    val_gasto = st.number_input("Valor Gasto (R$)", min_value=0.0, step=10.0, key="v_gasto")
+                    if st.button("Registrar Saída", use_container_width=True, key="btn_salvar_saida_cli"):
+                        if val_gasto > 0 and area_gasto:
+                            add_transaction(user, "Gasto", val_gasto, area_gasto)
+                            update_user_in_db(user, gastos=dados_user["gastos"] + val_gasto)
+                            st.success("Gasto registrado com sucesso!")
+                            st.rerun()
+                        else:
+                            st.warning("Informe valor e classificação.")
 
-        st.divider()
+            with tab_analytics:
+                st.subheader("📊 Valores Agrupados")
+                if not df_transacoes_user.empty:
+                    df_ganhos = df_transacoes_user[df_transacoes_user["tipo"] == "Ganho"]
+                    df_gastos = df_transacoes_user[df_transacoes_user["tipo"] == "Gasto"]
+                    col_ga1, col_ga2 = st.columns(2)
+                    with col_ga1:
+                        st.markdown("##### Ganhos por Categoria")
+                        if not df_ganhos.empty:
+                            st.table(df_ganhos.groupby("descricao")["valor"].sum().reset_index().rename(columns={"descricao": "Categoria", "valor": "Total (R$)"}))
+                        else:
+                            st.info("Sem entradas registradas.")
+                    with col_ga2:
+                        st.markdown("##### Gastos por Categoria")
+                        if not df_gastos.empty:
+                            st.table(df_gastos.groupby("descricao")["valor"].sum().reset_index().rename(columns={"descricao": "Categoria", "valor": "Total (R$)"}))
+                        else:
+                            st.info("Sem gastos registrados.")
+                    st.divider()
+                    st.markdown("##### Extrato Completo")
+                    st.dataframe(df_transacoes_user[["data_hora", "tipo", "descricao", "valor"]].rename(columns={"data_hora": "Data", "descricao": "Categoria", "valor": "Valor (R$)"}), use_container_width=True)
+                else:
+                    st.info("Nenhuma movimentação para exibir.")
 
-        # --- SEÇÃO: SIMULADOR DE EMPRÉSTIMO PARCELADO ---
-        st.subheader("🏦 Simulador de Empréstimo Parcelado")
-        st.write(f"Seu limite disponível: **R$ {dados_user['limite_emprestimo']:,.2f}**")
-        
-        col_emp1, col_emp2 = st.columns(2)
-        with col_emp1:
-            valor_solicitado = st.number_input("Valor do Empréstimo (R$)", min_value=0.0, max_value=max(0.0, dados_user["limite_emprestimo"]), step=50.0, key="simular_emp")
-        with col_emp2:
-            qtd_parcelas = st.number_input("Quantidade de Parcelas (Máx 12x)", min_value=1, max_value=12, value=1, step=1)
-        
-        if valor_solicitado > 0:
-            valor_base_parcela = valor_solicitado / qtd_parcelas
-            valor_parcela_com_juros = valor_base_parcela * 1.05
-            total_a_pagar = valor_parcela_com_juros * qtd_parcelas
-            
-            st.info(f"### 📊 Cronograma de Pagamento (Juros: 5% por parcela)")
-            
-            data_atual = datetime.now()
-            cronograma = []
-            for i in range(1, qtd_parcelas + 1):
-                data_vencimento = adicionar_meses(data_atual, i)
-                data_formatada = data_vencimento.strftime("%d/%m/%Y")
-                cronograma.append({"Parcela": f"{i}x", "Vencimento": data_formatada, "Valor": f"R$ {valor_parcela_com_juros:,.2f}"})
-            
-            st.table(cronograma)
-            st.warning(f"**Resumo do Contrato:** Você recebe **R$ {valor_solicitado:,.2f}** hoje e paga um total de **R$ {total_a_pagar:,.2f}**.")
-            
-            if st.button("Contratar Empréstimo", type="primary", key="contratar_emprestimo"):
-                update_user_in_db(
-                    user,
-                    ganhos=dados_user['ganhos'] + valor_solicitado,
-                    divida_emprestimo=dados_user['divida_emprestimo'] + total_a_pagar,
-                    limite_emprestimo=dados_user['limite_emprestimo'] - valor_solicitado,
-                )
-                add_transaction(user, "emprestimo", valor_solicitado, f"Empréstimo contratado em {qtd_parcelas}x")
-                st.success("🎉 Empréstimo contratado com sucesso!")
-                st.rerun()
+            with tab_credito:
+                st.subheader("🏛️ Crédito Apex")
+                st.write(f"Limite disponível: **R$ {limite_disponivel:,.2f}**")
+                v_sol = st.number_input("Valor Solicitado (R$):", min_value=0.0, max_value=limite_disponivel, step=50.0, key="v_sol")
+                if v_sol > 0:
+                    dados_simulacao = []
+                    for parcelas in range(1, 13):
+                        total_juros = float(v_sol * ((1 + 0.05) ** parcelas))
+                        valor_parcela = total_juros / parcelas
+                        dados_simulacao.append({
+                            "Parcelas": f"{parcelas}x",
+                            "Valor da Parcela": f"R$ {valor_parcela:,.2f}",
+                            "Total com Juros": f"R$ {total_juros:,.2f}"
+                        })
+                    st.table(pd.DataFrame(dados_simulacao))
+                    p_sol = st.number_input("Parcelas desejadas (1 a 12):", min_value=1, max_value=12, value=1, step=1, key="p_sol")
+                    total_final_escolhido = float(v_sol * ((1 + 0.05) ** p_sol))
+                    if st.button("Contratar Empréstimo Apex", type="primary", use_container_width=True, key="btn_pegar_emprestimo_cli"):
+                        update_user_in_db(
+                            user,
+                            ganhos=dados_user["ganhos"] + v_sol,
+                            divida_emprestimo=dados_user["divida_emprestimo"] + total_final_escolhido,
+                            limite_emprestimo=max(0.0, dados_user["limite_emprestimo"] - v_sol),
+                        )
+                        create_loan_in_db(user, v_sol, total_final_escolhido, int(p_sol))
+                        add_transaction(user, "Empréstimo", v_sol, f"Empréstimo em {p_sol}x")
+                        st.success("Crédito liberado e salvo permanentemente!")
+                        st.rerun()
+
+                st.divider()
+                st.markdown("#### 📊 Seus Contratos de Empréstimos Ativos")
+                if not df_loans_user.empty:
+                    st.dataframe(df_loans_user[["data_hora", "valor_puro", "total_com_juros", "parcelas", "divida_restante"]].rename(columns={"data_hora": "Data", "valor_puro": "Valor Recebido (R$)", "total_com_juros": "Total com Juros (R$)", "parcelas": "Prazo (Meses)", "divida_restante": "Dívida Atual (R$)"}), use_container_width=True)
+                else:
+                    st.info("Você não possui contratos de empréstimo ativos no momento.")
 
 if __name__ == '__main__':
     import sys
