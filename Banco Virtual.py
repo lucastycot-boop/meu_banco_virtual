@@ -1,51 +1,26 @@
 import streamlit as st
 import pandas as pd
-import io
 from datetime import datetime
 
 st.set_page_config(page_title="Meu Banco Digital", page_icon="💰", layout="wide")
 
-# --- SISTEMA DE ARQUIVOS ADAPTADO PARA O STREAMLIT STORAGE ---
+# --- BANCO DE DADOS EM MEMÓRIA CACHE GLOBAL DO SERVER ---
+# Criamos um cache compartilhado para que os dados sobrevivam aos acessos
 
-def carregar_do_storage(nome_arquivo, colunas_iniciais=None, dados_iniciais=None):
-    """Carrega os dados salvos nos Secrets do Streamlit como se fosse um arquivo"""
-    # Se o arquivo já estiver salvo nos secrets da nuvem, reconstrói o DataFrame
-    if nome_arquivo in st.secrets:
-        try:
-            conteudo_csv = st.secrets[nome_arquivo]
-            return pd.read_csv(io.StringIO(conteudo_csv))
-        except:
-            pass
-            
-    # Se não tiver nada salvo, cria o padrão inicial
-    if dados_iniciais is not None:
-        return pd.DataFrame(dados_iniciais)
-    return pd.DataFrame(columns=colunas_iniciais)
+@st.cache_resource
+def obter_banco_global():
+    """Inicializa as tabelas na memória do servidor uma única vez"""
+    banco = {
+        "contas": pd.DataFrame([{
+            "usuario": "Lucas", "senha": "1702", "role": "desenvolvedor", "limite_emprestimo": 5000.0
+        }]),
+        "transacoes": pd.DataFrame(columns=["id", "usuario", "data", "mes_ano", "tipo", "area", "valor"]),
+        "emprestimos": pd.DataFrame(columns=["id", "usuario", "data", "valor_puro", "total_com_juros", "parcelas", "divida_restante"])
+    }
+    return banco
 
-def salvar_no_storage(nome_arquivo, df):
-    """Salva o DataFrame direto na memória permanente do Streamlit Secrets"""
-    # Transforma a tabela em texto puro (formato CSV)
-    output = io.StringIO()
-    df.to_csv(output, index=False)
-    conteudo_csv = output.getvalue()
-    
-    # Grava na memória temporária da sessão e avisa como atualizar nos Secrets
-    st.secrets[nome_arquivo] = conteudo_csv
-    
-    # Armadilha de persistência local para a sessão atual não perder o dado
-    if "backup_banco" not in st.session_state:
-        st.session_state["backup_banco"] = {}
-    st.session_state["backup_banco"][nome_arquivo] = df
-
-# Carregamento Inicial dos Bancos de Dados Persistentes
-if "backup_banco" in st.session_state:
-    df_contas = st.session_state["backup_banco"].get("banco_contas", carregar_do_storage("banco_contas", dados_iniciais=[{"usuario": "Lucas", "senha": "1702", "role": "desenvolvedor", "limite_emprestimo": 5000.0}]))
-    df_transacoes = st.session_state["backup_banco"].get("banco_transacoes", carregar_do_storage("banco_transacoes", colunas_iniciais=["id", "usuario", "data", "mes_ano", "tipo", "area", "valor"]))
-    df_emprestimos = st.session_state["backup_banco"].get("banco_emprestimos", carregar_do_storage("banco_emprestimos", colunas_iniciais=["id", "usuario", "data", "valor_puro", "total_com_juros", "parcelas", "divida_restante"]))
-else:
-    df_contas = carregar_do_storage("banco_contas", dados_iniciais=[{"usuario": "Lucas", "senha": "1702", "role": "desenvolvedor", "limite_emprestimo": 5000.0}])
-    df_transacoes = carregar_do_storage("banco_transacoes", colunas_iniciais=["id", "usuario", "data", "mes_ano", "tipo", "area", "valor"])
-    df_emprestimos = carregar_do_storage("banco_emprestimos", colunas_iniciais=["id", "usuario", "data", "valor_puro", "total_com_juros", "parcelas", "divida_restante"])
+# Carrega os dados persistentes na sessão global do servidor
+banco_global = obter_banco_global()
 
 # Auxiliar para datas
 def adicionar_meses(data_base, meses):
@@ -56,12 +31,15 @@ def adicionar_meses(data_base, meses):
 
 # --- APLICATIVO PRINCIPAL ---
 def meu_banco_digital():
-    global df_contas, df_transacoes, df_emprestimos
-    st.title("💰 Sistema Bancário Sem Perda de Dados")
+    st.title("💰 Sistema Bancário & Gestão Avançada")
 
     if "logado" not in st.session_state: st.session_state.logado = False
     if "usuario_atual" not in st.session_state: st.session_state.usuario_atual = None
     if "limite_padrao" not in st.session_state: st.session_state.limite_padrao = 2000.0
+
+    df_contas = banco_global["contas"]
+    df_transacoes = banco_global["transacoes"]
+    df_emprestimos = banco_global["emprestimos"]
 
     # TELA DE ACESSO
     if not st.session_state.logado:
@@ -90,8 +68,7 @@ def meu_banco_digital():
                 elif n_pass != c_pass: st.error("Senhas diferentes!")
                 else:
                     nova_c = pd.DataFrame([{"usuario": n_user, "senha": n_pass, "role": "usuario", "limite_emprestimo": float(st.session_state.limite_padrao)}])
-                    df_contas = pd.concat([df_contas, nova_c], ignore_index=True)
-                    salvar_no_storage("banco_contas", df_contas)
+                    banco_global["contas"] = pd.concat([df_contas, nova_c], ignore_index=True)
                     st.success("Conta Criada! Vá para a aba Entrar.")
                     st.rerun()
         return
@@ -123,12 +100,9 @@ def meu_banco_digital():
             if lista_usuarios:
                 user_excluir = st.selectbox("Selecione a conta para deletar:", lista_usuarios)
                 if st.button("Confirmar Exclusão de Conta", type="destructive"):
-                    df_contas = df_contas[df_contas["usuario"] != user_excluir]
-                    df_transacoes = df_transacoes[df_transacoes["usuario"] != user_excluir]
-                    df_emprestimos = df_emprestimos[df_emprestimos["usuario"] != user_excluir]
-                    salvar_no_storage("banco_contas", df_contas)
-                    salvar_no_storage("banco_transacoes", df_transacoes)
-                    salvar_no_storage("banco_emprestimos", df_emprestimos)
+                    banco_global["contas"] = df_contas[df_contas["usuario"] != user_excluir]
+                    banco_global["transacoes"] = df_transacoes[df_transacoes["usuario"] != user_excluir]
+                    banco_global["emprestimos"] = df_emprestimos[df_emprestimos["usuario"] != user_excluir]
                     st.success(f"Conta de {user_excluir} apagada!")
                     st.rerun()
             else:
@@ -141,8 +115,7 @@ def meu_banco_digital():
                 id_deletar = st.number_input("ID da transação para apagar:", min_value=0, step=1)
                 if st.button("Deletar Registro", type="destructive"):
                     if id_deletar in df_transacoes["id"].values:
-                        df_transacoes = df_transacoes[df_transacoes["id"] != id_deletar]
-                        salvar_no_storage("banco_transacoes", df_transacoes)
+                        banco_global["transacoes"] = df_transacoes[df_transacoes["id"] != id_deletar]
                         st.success(f"Transação ID {id_deletar} removida!")
                         st.rerun()
             else:
@@ -163,7 +136,7 @@ def meu_banco_digital():
                     if st.button("Dar Baixa no Pagamento"):
                         if v_recebido > 0:
                             df_emprestimos.loc[idx_emp, "divida_restante"] -= v_recebido
-                            salvar_no_storage("banco_emprestimos", df_emprestimos)
+                            banco_global["emprestimos"] = df_emprestimos
                             st.success("Pagamento registrado!")
                             st.rerun()
             else:
@@ -207,8 +180,7 @@ def meu_banco_digital():
                         "id": novo_id, "usuario": user, "data": datetime.now().strftime("%d/%m/%Y"),
                         "mes_ano": datetime.now().strftime("%m/%Y"), "tipo": "Ganho", "area": area_ganho, "valor": val_ganho
                     }])
-                    df_transacoes = pd.concat([df_transacoes, nova_t], ignore_index=True)
-                    salvar_no_storage("banco_transacoes", df_transacoes)
+                    banco_global["transacoes"] = pd.concat([df_transacoes, nova_t], ignore_index=True)
                     st.success("Ganho registrado!")
                     st.rerun()
 
@@ -223,8 +195,7 @@ def meu_banco_digital():
                         "id": novo_id, "usuario": user, "data": datetime.now().strftime("%d/%m/%Y"),
                         "mes_ano": datetime.now().strftime("%m/%Y"), "tipo": "Gasto", "area": area_gasto, "valor": val_gasto
                     }])
-                    df_transacoes = pd.concat([df_transacoes, nova_t], ignore_index=True)
-                    salvar_no_storage("banco_transacoes", df_transacoes)
+                    banco_global["transacoes"] = pd.concat([df_transacoes, nova_t], ignore_index=True)
                     st.success("Gasto computado!")
                     st.rerun()
 
@@ -273,8 +244,7 @@ def meu_banco_digital():
                     "id": novo_id_emp, "usuario": user, "data": datetime.now().strftime("%d/%m/%Y"),
                     "valor_puro": v_solicitado, "total_com_juros": t_pagar, "parcelas": int(p_solicitadas), "divida_restante": t_pagar
                 }])
-                df_emprestimos = pd.concat([df_emprestimos, novo_emp], ignore_index=True)
-                salvar_no_storage("banco_emprestimos", df_emprestimos)
+                banco_global["emprestimos"] = pd.concat([df_emprestimos, novo_emp], ignore_index=True)
                 st.success("Dinheiro liberado!")
                 st.rerun()
                 
