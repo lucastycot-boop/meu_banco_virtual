@@ -98,12 +98,12 @@ def meu_banco_digital():
     user = st.session_state.usuario_atual
     dados_user = df_contas[df_contas["usuario"] == user].iloc[0]
 
-    # Cabeçalho Principal com perfil e botão de desconexão linear (Longe da Sidebar)
+    # Cabeçalho Principal com perfil e botão de desconexão (Sem type="destructive")
     c_perfil, c_logout = st.columns([5, 1])
     with c_perfil:
         st.markdown(f"👤 Conectado como: **{user}**")
     with c_logout:
-        if st.button("🚪 Sair do Sistema", type="destructive", use_container_width=True, key="btn_logout_linear_topo"):
+        if st.button("🚪 Sair do Sistema", use_container_width=True, key="btn_logout_linear_topo"):
             st.session_state.logado = False
             st.session_state.usuario_atual = None
             st.rerun()
@@ -141,7 +141,8 @@ def meu_banco_digital():
                 st.markdown("#### ❌ Excluir Conta de Cliente")
                 if lista_clientes:
                     user_excluir = st.selectbox("Selecione a conta para deletar:", lista_clientes, key="sel_u_excluir")
-                    if st.button("Confirmar Exclusão Definitiva", type="destructive", key="btn_deletar_conta_adm"):
+                    # Removido o type="destructive" daqui também!
+                    if st.button("Confirmar Exclusão Definitiva", key="btn_deletar_conta_adm"):
                         df_contas = df_contas[df_contas["usuario"] != user_excluir].reset_index(drop=True)
                         df_transacoes = df_transacoes[df_transacoes["usuario"] != user_excluir].reset_index(drop=True)
                         df_emprestimos = df_emprestimos[df_emprestimos["usuario"] != user_excluir].reset_index(drop=True)
