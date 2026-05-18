@@ -11,6 +11,7 @@ st.set_page_config(
 )
 
 # 2. Conexão com o Google Sheets (Banco de Dados na Nuvem)
+# O Streamlit vai ler as credenciais secretas configuradas no painel dele
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
 except Exception:
@@ -19,7 +20,9 @@ except Exception:
 def carregar_dados_nuvem(aba, lista_inicial):
     if conn:
         try:
+            # Puxa os dados em tempo real da planilha online
             df = conn.read(worksheet=aba)
+            # Se a planilha estiver vazia, garante as colunas corretas
             if df.empty:
                 return pd.DataFrame(columns=lista_inicial)
             return df
@@ -30,6 +33,7 @@ def carregar_dados_nuvem(aba, lista_inicial):
 def salvar_dados_nuvem(aba, df):
     if conn:
         try:
+            # Limpa valores nulos e envia para a nuvem
             df_salvar = df.dropna(how='all')
             conn.update(worksheet=aba, data=df_salvar)
         except Exception as e:
@@ -49,6 +53,7 @@ if "df_emprestimos" not in st.session_state:
 
 
 def meu_banco_digital():
+    # Sincroniza sempre com o estado da sessão ativo
     df_contas = st.session_state.df_contas
     df_transacoes = st.session_state.df_transacoes
     df_emprestimos = st.session_state.df_emprestimos
@@ -97,6 +102,7 @@ def meu_banco_digital():
                             nova_c = pd.DataFrame([{"usuario": n_user, "senha": n_pass, "role": "usuario", "limite_emprestimo": float(st.session_state.limite_padrao)}])
                             st.session_state.df_contas = pd.concat([df_contas, nova_c], ignore_index=True)
                             
+                            # SALVA DIRETO NA PLANILHA GOOGLE
                             salvar_dados_nuvem("contas", st.session_state.df_contas)
                             st.success("Conta criada com sucesso! Vá para a aba 'Entrar'.")
         return
@@ -109,8 +115,7 @@ def meu_banco_digital():
     with c_perfil:
         st.markdown(f"👤 Conectado como: **{user}**")
     with c_logout:
-        # CORREÇÃO: Removida a chave estática conflitante do botão de logout
-        if st.button("🚪 Sair do Sistema", use_container_width=True):
+        if st.button("🚪 Sair do Sistema", use_container_width=True, key="btn_logout_linear_topo"):
             st.session_state.logado = False
             st.session_state.usuario_atual = None
             st.rerun()
@@ -125,7 +130,7 @@ def meu_banco_digital():
         tab_usuarios, tab_transacoes_adm, tab_emprestimos_adm = st.tabs(["👥 Gerenciar Clientes", "📊 Extrato Geral", "🏦 Créditos Ativos"])
         
         with tab_usuarios:
-            st.markdown("##### Todos os Usuários Registrados")
+            st.markdown("##### Todos os Usuários Registrados (Lidos da Nuvem)")
             st.dataframe(df_contas, use_container_width=True)
             
             with st.container(border=True):
@@ -146,9 +151,7 @@ def meu_banco_digital():
                 else:
                     st.info("Nenhum cliente cadastrado.")
             
-            # CORREÇÃO: Substituído markdown de quebra de linha por st.html para evitar o TypeError
-            st.html("<br>")
-            
+            st.markdown("<br>", unsafe_allow_html=True)
             with st.container(border=True):
                 st.markdown("#### ❌ Excluir Conta de Cliente")
                 if lista_clientes:
@@ -161,7 +164,7 @@ def meu_banco_digital():
                         salvar_dados_nuvem("contas", st.session_state.df_contas)
                         salvar_dados_nuvem("transacoes", st.session_state.df_transacoes)
                         salvar_dados_nuvem("emprestimos", st.session_state.df_emprestimos)
-                        st.success("Conta removida com sucesso!")
+                        st.success("Conta removida de forma permanente!")
                         st.rerun()
 
         with tab_transacoes_adm:
@@ -216,7 +219,7 @@ def meu_banco_digital():
                             }])
                             st.session_state.df_transacoes = pd.concat([df_transacoes, nova_t], ignore_index=True)
                             salvar_dados_nuvem("transacoes", st.session_state.df_transacoes)
-                            st.success("Ganho registrado!")
+                            st.success("Ganho registrado na nuvem!")
                             st.rerun()
 
             with c_gasto:
@@ -231,4 +234,88 @@ def meu_banco_digital():
                                 "id": novo_id, "usuario": user, "data": datetime.now().strftime("%d/%m/%Y"),
                                 "mes_ano": datetime.now().strftime("%m/%Y"), "tipo": "Gasto", "area": area_gasto, "valor": val_gasto
                             }])
-                            st.session_state.df_
+                            st.session_state.df_transacoes = pd.concat([df_transacoes, nova_t], ignore_index=True)
+                            salvar_dados_nuvem("transacoes", st.session_state.df_transacoes)
+                            st.success("Gasto computado na nuvem!")
+                            st.rerun()
+
+        with tab_analytics:
+            st.subheader("📊 Valores Agrupados Inteligentemente")
+            if not t_user.empty:
+                cg1, cg2 = st.columns(2)
+                with cg1:
+                    st.markdown("##### Total de Ganhos por Área")
+                    df_g = t_user[t_user["tipo"] == "Ganho"]
+                    if not df_g.empty:
+                        st.table(df_g.groupby("area")["valor"].sum().reset_index().rename(columns={"area": "Categoria", "valor": "Soma (R$)"}))
+                    else:
+                        st.info("Sem entradas.")
+                with cg2:
+                    st.markdown("##### Total de Gastos por Área")
+                    df_p = t_user[t_user["tipo"] == "Gasto"]
+                    if not df_p.empty:
+                        st.table(df_p.groupby("area")["valor"].sum().reset_index().rename(columns={"area": "Categoria", "valor": "Soma (R$)"}))
+                    else:
+                        st.info("Sem gastos.")
+                st.divider()
+                st.markdown("##### Extrato Completo Linha por Linha")
+                st.dataframe(t_user[["data", "tipo", "area", "valor"]], use_container_width=True)
+            else:
+                st.info("Nenhuma movimentação para exibir.")
+
+        with tab_credito:
+            st.subheader("🏛️ Crédito sob Medida Apex")
+            st.write(f"Limite Disponível para Empréstimo: **R$ {max(0.0, limite_disponivel):,.2f}**")
+            
+            with st.container(border=True):
+                st.markdown("#### 📝 Solicitar Novo Crédito")
+                v_sol = st.number_input("Valor Solicitado (R$):", min_value=0.0, max_value=max(0.0, limite_disponivel), step=50.0)
+                
+                if v_sol > 0:
+                    st.markdown("##### 📊 Tabela de Simulação de Parcelas")
+                    dados_simulacao = []
+                    for parcelas in range(1, 13):
+                        total_juros = float(v_sol * ((1 + 0.05) ** parcelas))
+                        valor_parcela = total_juros / parcelas
+                        dados_simulacao.append({
+                            "Parcelas": f"{parcelas}x",
+                            "Valor da Parcela": f"R$ {valor_parcela:,.2f}",
+                            "Total com Juros": f"R$ {total_juros:,.2f}"
+                        })
+                    
+                    df_simulado = pd.DataFrame(dados_simulacao)
+                    st.table(df_simulado)
+                    
+                    p_sol = st.number_input("Digite a quantidade de parcelas desejada (1 a 12):", min_value=1, max_value=12, value=1)
+                    total_final_escolhido = float(v_sol * ((1 + 0.05) ** p_sol))
+                    
+                    if st.button("Contratar Empréstimo Apex", type="primary", use_container_width=True, key="btn_pegar_emprestimo_cli"):
+                        n_id_emp = int(df_emprestimos["id"].max() + 1) if not df_emprestimos.empty else 1
+                        novo_emp = pd.DataFrame([{
+                            "id": n_id_emp, "usuario": user, "data": datetime.now().strftime("%d/%m/%Y"),
+                            "valor_puro": v_sol, "total_com_juros": total_final_escolhido, "parcelas": int(p_sol), "divida_restante": total_final_escolhido
+                        }])
+                        st.session_state.df_emprestimos = pd.concat([df_emprestimos, novo_emp], ignore_index=True)
+                        
+                        salvar_dados_nuvem("emprestimos", st.session_state.df_emprestimos)
+                        st.success("Crédito liberado e salvo permanentemente!")
+                        st.rerun()
+            
+            st.divider()
+            st.markdown("#### 📊 Seus Contratos de Empréstimos Ativos")
+            if not e_user.empty:
+                st.dataframe(
+                    e_user[["data", "valor_puro", "total_com_juros", "parcelas", "divida_restante"]].rename(columns={
+                        "data": "Data de Contratação",
+                        "valor_puro": "Valor Recebido (R$)",
+                        "total_com_juros": "Total com Juros (R$)",
+                        "parcelas": "Prazo (Meses)",
+                        "divida_restante": "Dívida Atual (R$)"
+                    }), 
+                    use_container_width=True
+                )
+            else:
+                st.info("Você não possui contratos de empréstimo ativos no momento.")
+
+if __name__ == '__main__':
+    meu_banco_digital()
