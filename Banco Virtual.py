@@ -50,7 +50,7 @@ def meu_banco_digital():
             u_input = st.text_input("Usuário", key="l_user")
             s_input = st.text_input("Senha", type="password", key="l_pass")
             if st.button("Entrar no Banco", use_container_width=True):
-                rows = df_contas[df_contas["usuario"].astype(str) == str(u_input)]
+                rows = df_contas[df_contas["usuario"].astype(str).str.strip() == str (u_input).strip()]
                 if not rows.empty and str(rows.iloc[0]["senha"]) == str(s_input):
                     st.session_state.logado = True
                     st.session_state.usuario_atual = u_input
