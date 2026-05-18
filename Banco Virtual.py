@@ -328,7 +328,7 @@ def meu_banco_digital():
                 if v_sol > 0:
                     dados_simulacao = []
                     for parcelas in range(1, 13):
-                        total_juros = float(v_sol * ((1 + 0.05) ** parcelas))
+                        total_juros = float(v_sol * ((1 + 0.06) ** parcelas))
                         valor_parcela = total_juros / parcelas
                         dados_simulacao.append({
                             "Parcelas": f"{parcelas}x",
@@ -337,7 +337,7 @@ def meu_banco_digital():
                         })
                     st.table(pd.DataFrame(dados_simulacao))
                     p_sol = st.number_input("Parcelas desejadas (1 a 12):", min_value=1, max_value=12, value=1, step=1, key="p_sol")
-                    total_final_escolhido = float(v_sol * ((1 + 0.05) ** p_sol))
+                    total_final_escolhido = float(v_sol * ((1 + 0.06) ** p_sol))
                     if st.button("Contratar Empréstimo Apex", type="primary", use_container_width=True, key="btn_pegar_emprestimo_cli"):
                         update_user_in_db(
                             user,
