@@ -1,367 +1,385 @@
 import streamlit as st
-import pandas as pd
+import sqlite3
+from sqlite3 import Connection
 from datetime import datetime
-import json
-import os
-import tempfile
+import pandas as pd
+import hashlib
+from typing import Optional, List, Dict
 
-# ---------- Configuração de Página ----------
+# -------------------------
+# Config
+# -------------------------
 st.set_page_config(page_title="Apex Banco Digital", page_icon="🔱", layout="wide")
+DB_FILE = "apex_bank.db"
+ADMIN_USER = "Lucas"
+ADMIN_PASS = "1702"  # you can change this before deploying
 
-# ---------- Nomes dos arquivos ----------
-ARQUIVO_CONTAS = "banco_contas.json"
-ARQUIVO_TRANSACOES = "banco_transacoes.json"
-ARQUIVO_EMPRESTIMOS = "banco_emprestimos.json"
+# -------------------------
+# Utilities
+# -------------------------
+def hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
-# ---------- Funções de Persistência Seguras ----------
-def salvar_dados_locais(arquivo: str, df: pd.DataFrame):
-    """Salva DataFrame em JSON de forma atômica e segura."""
+def get_conn() -> Connection:
+    return sqlite3.connect(DB_FILE, check_same_thread=False)
+
+def init_db():
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'usuario',
+        limite_emprestimo REAL NOT NULL DEFAULT 2000.0,
+        created_at TEXT NOT NULL
+    )
+    """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS transactions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        date TEXT NOT NULL,
+        mes_ano TEXT NOT NULL,
+        tipo TEXT NOT NULL,
+        categoria TEXT NOT NULL,
+        valor REAL NOT NULL,
+        FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+    """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS loans (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        date TEXT NOT NULL,
+        valor_puro REAL NOT NULL,
+        total_com_juros REAL NOT NULL,
+        parcelas INTEGER NOT NULL,
+        divida_restante REAL NOT NULL,
+        FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+    """)
+    conn.commit()
+
+    # ensure admin exists
+    cur.execute("SELECT id FROM users WHERE username = ?", (ADMIN_USER,))
+    if cur.fetchone() is None:
+        cur.execute(
+            "INSERT INTO users (username, password_hash, role, limite_emprestimo, created_at) VALUES (?, ?, ?, ?, ?)",
+            (ADMIN_USER, hash_password(ADMIN_PASS), "desenvolvedor", 5000.0, datetime.now().isoformat())
+        )
+        conn.commit()
+    conn.close()
+
+def create_user(username: str, password: str, limite: float = 2000.0, role: str = "usuario") -> bool:
     try:
-        dados = df.to_dict(orient="records")
-        dirpath = os.path.dirname(os.path.abspath(arquivo)) or "."
-        # cria arquivo temporário no mesmo diretório para garantir atomicidade
-        with tempfile.NamedTemporaryFile("w", delete=False, dir=dirpath, encoding="utf-8") as tmp:
-            json.dump(dados, tmp, ensure_ascii=False, indent=4)
-            tmp_name = tmp.name
-        os.replace(tmp_name, arquivo)
-    except Exception as e:
-        st.error(f"Erro ao salvar {arquivo}: {e}")
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO users (username, password_hash, role, limite_emprestimo, created_at) VALUES (?, ?, ?, ?, ?)",
+            (username.strip(), hash_password(password), role, float(limite), datetime.now().isoformat())
+        )
+        conn.commit()
+        conn.close()
+        return True
+    except sqlite3.IntegrityError:
+        return False
 
-def carregar_dados_locais(arquivo: str, dados_iniciais):
-    """Carrega JSON para DataFrame; se falhar, recria com dados iniciais."""
-    if os.path.exists(arquivo):
-        try:
-            with open(arquivo, "r", encoding="utf-8") as f:
-                dados = json.load(f)
-            df = pd.DataFrame(dados)
-            # garantir colunas mínimas
-            return df
-        except Exception as e:
-            st.warning(f"Atenção: arquivo {arquivo} corrompido ou inválido. Recriando. ({e})")
-    # cria arquivo novo com dados iniciais
-    df = pd.DataFrame(dados_iniciais)
-    salvar_dados_locais(arquivo, df)
+def authenticate(username: str, password: str) -> Optional[Dict]:
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT id, username, role, limite_emprestimo FROM users WHERE username = ? AND password_hash = ?",
+                (username.strip(), hash_password(password)))
+    row = cur.fetchone()
+    conn.close()
+    if row:
+        return {"id": row[0], "username": row[1], "role": row[2], "limite_emprestimo": float(row[3])}
+    return None
+
+def get_user_by_username(username: str) -> Optional[Dict]:
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT id, username, role, limite_emprestimo FROM users WHERE username = ?", (username.strip(),))
+    row = cur.fetchone()
+    conn.close()
+    if row:
+        return {"id": row[0], "username": row[1], "role": row[2], "limite_emprestimo": float(row[3])}
+    return None
+
+def list_clients() -> List[Dict]:
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT id, username, role, limite_emprestimo, created_at FROM users WHERE LOWER(role) != 'desenvolvedor' ORDER BY username")
+    rows = cur.fetchall()
+    conn.close()
+    return [{"id": r[0], "username": r[1], "role": r[2], "limite_emprestimo": float(r[3]), "created_at": r[4]} for r in rows]
+
+def list_all_users() -> pd.DataFrame:
+    conn = get_conn()
+    df = pd.read_sql_query("SELECT id, username, role, limite_emprestimo, created_at FROM users ORDER BY id", conn)
+    conn.close()
     return df
 
-# ---------- Inicialização do session_state ----------
-if "df_contas" not in st.session_state:
-    st.session_state.df_contas = carregar_dados_locais(ARQUIVO_CONTAS, [
-        {"usuario": "Lucas", "senha": "1702", "role": "desenvolvedor", "limite_emprestimo": 5000.0}
-    ])
-# garantir estrutura mínima
-if st.session_state.df_contas is None or st.session_state.df_contas.empty:
-    st.session_state.df_contas = pd.DataFrame([{"usuario": "Lucas", "senha": "1702", "role": "desenvolvedor", "limite_emprestimo": 5000.0}])
+def add_transaction(user_id: int, tipo: str, categoria: str, valor: float):
+    conn = get_conn()
+    cur = conn.cursor()
+    now = datetime.now()
+    cur.execute(
+        "INSERT INTO transactions (user_id, date, mes_ano, tipo, categoria, valor) VALUES (?, ?, ?, ?, ?, ?)",
+        (user_id, now.strftime("%d/%m/%Y"), now.strftime("%m/%Y"), tipo, categoria.strip(), float(valor))
+    )
+    conn.commit()
+    conn.close()
 
-if "df_transacoes" not in st.session_state:
-    st.session_state.df_transacoes = carregar_dados_locais(ARQUIVO_TRANSACOES, [])
-    if st.session_state.df_transacoes.empty:
-        st.session_state.df_transacoes = pd.DataFrame(columns=["id", "usuario", "data", "mes_ano", "tipo", "area", "valor"])
+def get_transactions_for_user(user_id: int) -> pd.DataFrame:
+    conn = get_conn()
+    df = pd.read_sql_query("SELECT date, tipo, categoria, valor FROM transactions WHERE user_id = ? ORDER BY rowid DESC", conn, params=(user_id,))
+    conn.close()
+    return df
 
-if "df_emprestimos" not in st.session_state:
-    st.session_state.df_emprestimos = carregar_dados_locais(ARQUIVO_EMPRESTIMOS, [])
-    if st.session_state.df_emprestimos.empty:
-        st.session_state.df_emprestimos = pd.DataFrame(columns=["id", "usuario", "data", "valor_puro", "total_com_juros", "parcelas", "divida_restante"])
+def add_loan(user_id: int, valor_puro: float, parcelas: int, taxa_mensal: float = 0.05):
+    total = float(valor_puro) * ((1 + taxa_mensal) ** parcelas)
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO loans (user_id, date, valor_puro, total_com_juros, parcelas, divida_restante) VALUES (?, ?, ?, ?, ?, ?)",
+        (user_id, datetime.now().strftime("%d/%m/%Y"), float(valor_puro), float(total), int(parcelas), float(total))
+    )
+    conn.commit()
+    conn.close()
 
-# valores padrão de sessão
+def get_loans_for_user(user_id: int) -> pd.DataFrame:
+    conn = get_conn()
+    df = pd.read_sql_query("SELECT date, valor_puro, total_com_juros, parcelas, divida_restante FROM loans WHERE user_id = ? ORDER BY rowid DESC", conn, params=(user_id,))
+    conn.close()
+    return df
+
+def update_user_limit(user_id: int, novo_limite: float):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("UPDATE users SET limite_emprestimo = ? WHERE id = ?", (float(novo_limite), user_id))
+    conn.commit()
+    conn.close()
+
+def delete_user(user_id: int):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+
+# -------------------------
+# Initialize DB
+# -------------------------
+init_db()
+
+# -------------------------
+# Session state defaults
+# -------------------------
 st.session_state.setdefault("logado", False)
-st.session_state.setdefault("usuario_atual", None)
-st.session_state.setdefault("limite_padrao", 2000.0)
+st.session_state.setdefault("user", None)  # dict with id, username, role, limite_emprestimo
 
-# ---------- Utilitários ----------
-def next_id(df: pd.DataFrame, col: str = "id") -> int:
-    """Gera próximo id de forma robusta mesmo com colunas ausentes ou valores não numéricos."""
-    if col in df.columns and not df.empty:
-        try:
-            max_val = pd.to_numeric(df[col], errors="coerce").max(skipna=True)
-            return int(max_val or 0) + 1
-        except Exception:
-            return 1
-    return 1
+# -------------------------
+# UI
+# -------------------------
+def login_screen():
+    st.subheader("🔒 Acesso")
+    tabs = st.tabs(["🔑 Entrar", "📝 Criar Conta"])
+    with tabs[0]:
+        user = st.text_input("Usuário", key="login_user")
+        pwd = st.text_input("Senha", type="password", key="login_pass")
+        if st.button("Entrar", key="btn_login"):
+            if not user or not pwd:
+                st.warning("Preencha usuário e senha.")
+            else:
+                auth = authenticate(user, pwd)
+                if auth:
+                    st.session_state.logado = True
+                    st.session_state.user = auth
+                    st.experimental_rerun()
+                else:
+                    st.error("Usuário ou senha incorretos.")
+    with tabs[1]:
+        new_user = st.text_input("Nome de usuário", key="reg_user")
+        new_pass = st.text_input("Senha", type="password", key="reg_pass")
+        new_pass2 = st.text_input("Confirme a senha", type="password", key="reg_pass2")
+        if st.button("Criar Conta", key="btn_create"):
+            if not new_user or not new_pass:
+                st.warning("Preencha todos os campos.")
+            elif new_pass != new_pass2:
+                st.error("As senhas não coincidem.")
+            elif get_user_by_username(new_user):
+                st.error("Usuário já existe.")
+            else:
+                ok = create_user(new_user, new_pass)
+                if ok:
+                    st.success("Conta criada com sucesso. Faça login.")
+                else:
+                    st.error("Erro ao criar conta. Tente outro nome.")
 
-def usuario_existe(df: pd.DataFrame, usuario: str) -> bool:
-    return usuario.strip().lower() in df["usuario"].astype(str).str.strip().str.lower().values
+def admin_panel(user_info: Dict):
+    st.sidebar.success("⚡ Administrador")
+    st.header("🛠️ Painel Admin")
+    tabs = st.tabs(["👥 Usuários", "📊 Extratos", "🏦 Empréstimos"])
+    with tabs[0]:
+        st.markdown("#### Todos os usuários")
+        df_users = list_all_users()
+        st.dataframe(df_users, use_container_width=True)
 
-# ---------- Interface principal ----------
-def meu_banco_digital():
-    df_contas = st.session_state.df_contas
-    df_transacoes = st.session_state.df_transacoes
-    df_emprestimos = st.session_state.df_emprestimos
+        st.markdown("#### Alterar limite de cliente")
+        clients = list_clients()
+        if clients:
+            options = {c["username"]: c["id"] for c in clients}
+            sel = st.selectbox("Selecione cliente", list(options.keys()))
+            sel_id = options[sel]
+            cur_lim = next((c["limite_emprestimo"] for c in clients if c["id"] == sel_id), 0.0)
+            novo = st.number_input("Novo limite (R$)", min_value=0.0, value=float(cur_lim), step=100.0)
+            if st.button("Aplicar limite"):
+                update_user_limit(sel_id, novo)
+                st.success("Limite atualizado.")
+        else:
+            st.info("Nenhum cliente cadastrado.")
 
-    st.title("🔱 Apex | Sistema Bancário Inteligente")
+        st.markdown("#### Excluir cliente")
+        if clients:
+            options2 = {c["username"]: c["id"] for c in clients}
+            sel2 = st.selectbox("Selecionar para excluir", list(options2.keys()), key="del_select")
+            confirm = st.checkbox("Confirmo exclusão permanente", key="del_confirm")
+            if st.button("Excluir cliente") and confirm:
+                delete_user(options2[sel2])
+                st.success("Cliente excluído.")
+        else:
+            st.info("Nenhum cliente para excluir.")
 
-    # --- TELA 1: ACESSO E LOGON ---
-    if not st.session_state.logado:
-        col_cen, col_box, col_dir = st.columns([1, 2, 1])
-        with col_box:
-            with st.container():
-                st.subheader("🔒 Controle de Acesso")
-                aba_login, aba_cadastro = st.tabs(["🔑 Entrar", "📝 Criar Nova Conta"])
+    with tabs[1]:
+        st.markdown("#### Todas as transações")
+        conn = get_conn()
+        df_tx = pd.read_sql_query("""
+            SELECT t.id, u.username as usuario, t.date, t.tipo, t.categoria, t.valor
+            FROM transactions t JOIN users u ON t.user_id = u.id
+            ORDER BY t.id DESC
+        """, conn)
+        conn.close()
+        st.dataframe(df_tx, use_container_width=True)
 
-                with aba_login:
-                    u_input = st.text_input("Usuário", key="l_user")
-                    s_input = st.text_input("Senha", type="password", key="l_pass")
-                    if st.button("Acessar Banco", use_container_width=True, type="primary", key="btn_executar_login"):
-                        if not u_input or not s_input:
-                            st.warning("Preencha usuário e senha.")
-                        else:
-                            rows = df_contas[df_contas["usuario"].astype(str).str.strip().str.lower() == u_input.strip().lower()]
-                            if not rows.empty and str(rows.iloc[0]["senha"]).strip() == str(s_input).strip():
-                                st.session_state.logado = True
-                                st.session_state.usuario_atual = rows.iloc[0]["usuario"]
-                                st.experimental_rerun()
-                            else:
-                                st.error("Usuário ou senha incorretos!")
+    with tabs[2]:
+        st.markdown("#### Empréstimos ativos")
+        conn = get_conn()
+        df_loans = pd.read_sql_query("""
+            SELECT l.id, u.username as usuario, l.date, l.valor_puro, l.total_com_juros, l.parcelas, l.divida_restante
+            FROM loans l JOIN users u ON l.user_id = u.id
+            ORDER BY l.id DESC
+        """, conn)
+        conn.close()
+        st.dataframe(df_loans, use_container_width=True)
 
-                with aba_cadastro:
-                    n_user = st.text_input("Nome de Usuário", key="c_user")
-                    n_pass = st.text_input("Senha de Acesso", type="password", key="c_pass")
-                    c_pass = st.text_input("Confirme a Senha", type="password", key="c_cpass")
-                    if st.button("Cadastrar no Sistema", use_container_width=True, key="btn_executar_cadastro"):
-                        if not n_user or not n_pass:
-                            st.warning("Preencha todos os campos!")
-                        elif usuario_existe(df_contas, n_user):
-                            st.error("Este usuário já existe!")
-                        elif n_pass != c_pass:
-                            st.error("As senhas não batem!")
-                        else:
-                            nova_c = {
-                                "usuario": n_user.strip(),
-                                "senha": n_pass,
-                                "role": "usuario",
-                                "limite_emprestimo": float(st.session_state.limite_padrao)
-                            }
-                            st.session_state.df_contas = pd.concat([df_contas, pd.DataFrame([nova_c])], ignore_index=True)
-                            salvar_dados_locais(ARQUIVO_CONTAS, st.session_state.df_contas)
-                            st.success("Conta criada com sucesso! Faça login na aba Entrar.")
-        return
+def client_panel(user_info: Dict):
+    st.header(f"👋 Olá, {user_info['username']}")
+    user_id = user_info["id"]
 
-    # --- TELA 2: PAINEL RESTRITO ---
-    user = st.session_state.usuario_atual
-    dados_user_row = st.session_state.df_contas[st.session_state.df_contas["usuario"].astype(str).str.strip() == str(user).strip()]
-    if dados_user_row.empty:
-        st.error("Usuário não encontrado na base. Faça logout e tente novamente.")
-        st.session_state.logado = False
-        st.session_state.usuario_atual = None
-        return
-    dados_user = dados_user_row.iloc[0]
+    # summary
+    tx_df = get_transactions_for_user(user_id)
+    loans_df = get_loans_for_user(user_id)
+    ganhos = tx_df[tx_df["tipo"] == "Ganho"]["valor"].sum() if not tx_df.empty else 0.0
+    gastos = tx_df[tx_df["tipo"] == "Gasto"]["valor"].sum() if not tx_df.empty else 0.0
+    total_emprestimos = loans_df["valor_puro"].sum() if not loans_df.empty else 0.0
+    divida = loans_df["divida_restante"].sum() if not loans_df.empty else 0.0
+    saldo = (ganhos + total_emprestimos) - gastos
+    limite_disponivel = float(user_info.get("limite_emprestimo", 0.0)) - total_emprestimos
 
-    c_perfil, c_logout = st.columns([5, 1])
-    with c_perfil:
-        st.markdown(f"👤 Conectado como: **{dados_user['usuario']}**")
-    with c_logout:
-        if st.button("🚪 Sair do Sistema", use_container_width=True, key="btn_logout_linear_topo"):
-            st.session_state.logado = False
-            st.session_state.usuario_atual = None
-            st.experimental_rerun()
+    c1, c2, c3 = st.columns(3)
+    c1.metric("🟢 Saldo Disponível", f"R$ {saldo:,.2f}")
+    c2.metric("🔴 Dívida Consolidada", f"R$ {divida:,.2f}")
+    c3.metric("🔵 Linha de Crédito", f"R$ {max(0.0, limite_disponivel):,.2f}")
 
     st.divider()
-
-    # --- ROTA: ADMINISTRADOR ---
-    if str(dados_user.get("role", "")).strip().lower() == "desenvolvedor":
-        st.sidebar.success("⚡ Administrador Ativo")
-        st.header("🛠️ Painel de Controle Admin")
-
-        tab_usuarios, tab_transacoes_adm, tab_emprestimos_adm = st.tabs(["👥 Gerenciar Clientes", "📊 Extrato Geral", "🏦 Créditos Ativos"])
-
-        with tab_usuarios:
-            st.markdown("##### Todos os Usuários Registrados")
-            st.dataframe(st.session_state.df_contas.reset_index(drop=True), use_container_width=True)
-
-            with st.container():
-                st.markdown("#### ⚙️ Alterar Limite de Crédito")
-                mask_clientes = st.session_state.df_contas["role"].astype(str).str.strip().str.lower() != "desenvolvedor"
-                lista_clientes = st.session_state.df_contas.loc[mask_clientes, "usuario"].astype(str).tolist()
-                if lista_clientes:
-                    u_limite = st.selectbox("Selecione o Cliente:", lista_clientes, key="sel_u_limite")
-                    matches = st.session_state.df_contas[st.session_state.df_contas["usuario"].astype(str).str.strip() == str(u_limite).strip()]
-                    if matches.empty:
-                        st.error("Cliente selecionado não encontrado. Atualize a página e tente novamente.")
-                    else:
-                        idx_u = matches.index.tolist()[0]
-                        raw_lim = st.session_state.df_contas.loc[idx_u, "limite_emprestimo"] if "limite_emprestimo" in st.session_state.df_contas.columns else 0.0
-                        try:
-                            lim_atual = float(raw_lim) if pd.notna(raw_lim) else 0.0
-                        except Exception:
-                            lim_atual = 0.0
-                        novo_limite = st.number_input(f"Novo Limite (Atual: R$ {lim_atual:.2f}):", min_value=0.0, step=100.0, value=lim_atual)
-                        if st.button("Aplicar Novo Limite", type="primary", key="btn_mudar_limite_adm"):
-                            try:
-                                st.session_state.df_contas.loc[idx_u, "limite_emprestimo"] = float(novo_limite)
-                                salvar_dados_locais(ARQUIVO_CONTAS, st.session_state.df_contas)
-                                st.success("Limite modificado com sucesso!")
-                            except Exception as e:
-                                st.error(f"Erro ao atualizar limite: {e}")
+    tabs = st.tabs(["💸 Nova Transação", "📊 Resumo", "🏛️ Empréstimos"])
+    with tabs[0]:
+        st.markdown("#### Registrar Ganho")
+        colg1, colg2 = st.columns([2,1])
+        with colg1:
+            cat_g = st.text_input("Categoria (Ex: Salário)", key="cat_ganho")
+            val_g = st.number_input("Valor (R$)", min_value=0.0, step=1.0, key="val_ganho")
+            if st.button("Registrar Ganho"):
+                if val_g > 0 and cat_g.strip():
+                    add_transaction(user_id, "Ganho", cat_g, val_g)
+                    st.success("Ganho registrado.")
                 else:
-                    st.info("Nenhum cliente cadastrado.")
+                    st.warning("Preencha categoria e valor válido.")
 
-            with st.container():
-                st.markdown("#### ❌ Excluir Conta de Cliente")
-                if lista_clientes:
-                    user_excluir = st.selectbox("Selecione a conta para deletar:", lista_clientes, key="sel_u_excluir")
-                    confirm = st.checkbox("Confirmo exclusão permanente desta conta", key="chk_confirm_delete")
-                    if st.button("Confirmar Exclusão Definitiva", key="btn_deletar_conta_adm") and confirm:
-                        if user_excluir not in st.session_state.df_contas["usuario"].astype(str).values:
-                            st.error("Conta não encontrada. Atualize e tente novamente.")
-                        else:
-                            st.session_state.df_contas = st.session_state.df_contas[st.session_state.df_contas["usuario"] != user_excluir].reset_index(drop=True)
-                            st.session_state.df_transacoes = st.session_state.df_transacoes[st.session_state.df_transacoes["usuario"] != user_excluir].reset_index(drop=True)
-                            st.session_state.df_emprestimos = st.session_state.df_emprestimos[st.session_state.df_emprestimos["usuario"] != user_excluir].reset_index(drop=True)
-                            salvar_dados_locais(ARQUIVO_CONTAS, st.session_state.df_contas)
-                            salvar_dados_locais(ARQUIVO_TRANSACOES, st.session_state.df_transacoes)
-                            salvar_dados_locais(ARQUIVO_EMPRESTIMOS, st.session_state.df_emprestimos)
-                            st.success("Conta removida com sucesso!")
+        st.markdown("#### Registrar Gasto")
+        colp1, colp2 = st.columns([2,1])
+        with colp1:
+            cat_p = st.text_input("Categoria (Ex: Alimentação)", key="cat_gasto")
+            val_p = st.number_input("Valor (R$)", min_value=0.0, step=1.0, key="val_gasto")
+            if st.button("Registrar Gasto"):
+                if val_p > 0 and cat_p.strip():
+                    add_transaction(user_id, "Gasto", cat_p, val_p)
+                    st.success("Gasto registrado.")
                 else:
-                    st.info("Nenhum cliente para excluir.")
+                    st.warning("Preencha categoria e valor válido.")
 
-        with tab_transacoes_adm:
-            st.dataframe(st.session_state.df_transacoes.reset_index(drop=True), use_container_width=True)
-
-        with tab_emprestimos_adm:
-            st.dataframe(st.session_state.df_emprestimos.reset_index(drop=True), use_container_width=True)
-
-    # --- ROTA: CLIENTE ---
-    else:
-        t_user = st.session_state.df_transacoes[st.session_state.df_transacoes["usuario"] == user] if not st.session_state.df_transacoes.empty else pd.DataFrame()
-        ganhos_totais = t_user[t_user["tipo"] == "Ganho"]["valor"].sum() if not t_user.empty else 0.0
-        gastos_totais = t_user[t_user["tipo"] == "Gasto"]["valor"].sum() if not t_user.empty else 0.0
-
-        e_user = st.session_state.df_emprestimos[st.session_state.df_emprestimos["usuario"] == user] if not st.session_state.df_emprestimos.empty else pd.DataFrame()
-        total_recebido_emprestimo = e_user["valor_puro"].sum() if not e_user.empty else 0.0
-        divida_atual = e_user["divida_restante"].sum() if not e_user.empty else 0.0
-
-        saldo_real = (ganhos_totais + total_recebido_emprestimo) - gastos_totais
-        limite_disponivel = float(dados_user.get("limite_emprestimo", 0.0)) - total_recebido_emprestimo
-
-        st.markdown(f"### 👋 Olá, **{user}**")
-
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("🟢 SALDO DISPONÍVEL", f"R$ {saldo_real:,.2f}")
-        with col2:
-            st.metric("🔴 DÍVIDA CONSOLIDADA", f"R$ {divida_atual:,.2f}")
-        with col3:
-            st.metric("🔵 LINHA DE CRÉDITO", f"R$ {max(0.0, limite_disponivel):,.2f}")
-
-        st.divider()
-
-        tab_movimentar, tab_analytics, tab_credito = st.tabs(["💸 Nova Transação", "📊 Resumo por Categorias", "🏛️ Empréstimos"])
-
-        with tab_movimentar:
-            c_ganho, c_gasto = st.columns(2)
-            with c_ganho:
-                st.markdown("#### 📈 Lançar Entrada (Ganho/Pix)")
-                area_ganho = st.text_input("Classificação (Ex: Salário, Mesada)", key="a_ganho").strip().capitalize()
-                val_ganho = st.number_input("Valor Recebido (R$)", min_value=0.0, step=10.0, key="v_ganho")
-                if st.button("Registrar Entrada", use_container_width=True, key="btn_salvar_entrada_cli"):
-                    if val_ganho > 0 and area_ganho:
-                        novo_id = next_id(st.session_state.df_transacoes, "id")
-                        nova_t = {
-                            "id": novo_id,
-                            "usuario": user,
-                            "data": datetime.now().strftime("%d/%m/%Y"),
-                            "mes_ano": datetime.now().strftime("%m/%Y"),
-                            "tipo": "Ganho",
-                            "area": area_ganho,
-                            "valor": float(val_ganho)
-                        }
-                        st.session_state.df_transacoes = pd.concat([st.session_state.df_transacoes, pd.DataFrame([nova_t])], ignore_index=True)
-                        salvar_dados_locais(ARQUIVO_TRANSACOES, st.session_state.df_transacoes)
-                        st.success("Ganho registrado!")
-
-            with c_gasto:
-                st.markdown("#### 📉 Lançar Saída (Gasto/Compra)")
-                area_gasto = st.text_input("Classificação (Ex: Roupa, Lanche)", key="a_gasto").strip().capitalize()
-                val_gasto = st.number_input("Valor Gasto (R$)", min_value=0.0, step=10.0, key="v_gasto")
-                if st.button("Registrar Saída", use_container_width=True, key="btn_salvar_saida_cli"):
-                    if val_gasto > 0 and area_gasto:
-                        novo_id = next_id(st.session_state.df_transacoes, "id")
-                        nova_t = {
-                            "id": novo_id,
-                            "usuario": user,
-                            "data": datetime.now().strftime("%d/%m/%Y"),
-                            "mes_ano": datetime.now().strftime("%m/%Y"),
-                            "tipo": "Gasto",
-                            "area": area_gasto,
-                            "valor": float(val_gasto)
-                        }
-                        st.session_state.df_transacoes = pd.concat([st.session_state.df_transacoes, pd.DataFrame([nova_t])], ignore_index=True)
-                        salvar_dados_locais(ARQUIVO_TRANSACOES, st.session_state.df_transacoes)
-                        st.success("Gasto computado!")
-
-        with tab_analytics:
-            st.subheader("📊 Valores Agrupados Inteligentemente")
-            if not t_user.empty:
-                cg1, cg2 = st.columns(2)
-                with cg1:
-                    st.markdown("##### Total de Ganhos por Área")
-                    df_g = t_user[t_user["tipo"] == "Ganho"]
-                    if not df_g.empty:
-                        st.dataframe(df_g.groupby("area")["valor"].sum().reset_index().rename(columns={"area": "Categoria", "valor": "Soma (R$)"}))
-                    else:
-                        st.info("Sem entradas.")
-                with cg2:
-                    st.markdown("##### Total de Gastos por Área")
-                    df_p = t_user[t_user["tipo"] == "Gasto"]
-                    if not df_p.empty:
-                        st.dataframe(df_p.groupby("area")["valor"].sum().reset_index().rename(columns={"area": "Categoria", "valor": "Soma (R$)"}))
-                    else:
-                        st.info("Sem gastos.")
-                st.divider()
-                st.markdown("##### Extrato Completo Linha por Linha")
-                st.dataframe(t_user[["data", "tipo", "area", "valor"]], use_container_width=True)
-            else:
-                st.info("Nenhuma movimentação para exibir.")
-
-        with tab_credito:
-            st.subheader("🏛️ Crédito sob Medida Apex")
-            st.write(f"Limite Disponível para Empréstimo: **R$ {max(0.0, limite_disponivel):,.2f}**")
-            with st.container():
-                st.markdown("#### 📝 Solicitar Novo Crédito")
-                v_sol = st.number_input("Valor Solicitado (R$):", min_value=0.0, max_value=max(0.0, limite_disponivel), step=50.0)
-                if v_sol > 0:
-                    st.markdown("##### 📊 Tabela de Simulação de Parcelas")
-                    dados_simulacao = []
-                    for parcelas in range(1, 13):
-                        total_juros = float(v_sol * ((1 + 0.05) ** parcelas))
-                        valor_parcela = total_juros / parcelas
-                        dados_simulacao.append({
-                            "Parcelas": f"{parcelas}x",
-                            "Valor da Parcela": f"R$ {valor_parcela:,.2f}",
-                            "Total com Juros": f"R$ {total_juros:,.2f}"
-                        })
-                    st.table(pd.DataFrame(dados_simulacao))
-                    p_sol = st.number_input("Digite a quantidade de parcelas desejada (1 a 12):", min_value=1, max_value=12, value=1)
-                    total_final_escolhido = float(v_sol * ((1 + 0.05) ** p_sol))
-                    if st.button("Contratar Empréstimo Apex", type="primary", use_container_width=True, key="btn_pegar_emprestimo_cli"):
-                        n_id_emp = next_id(st.session_state.df_emprestimos, "id")
-                        novo_emp = {
-                            "id": n_id_emp,
-                            "usuario": user,
-                            "data": datetime.now().strftime("%d/%m/%Y"),
-                            "valor_puro": float(v_sol),
-                            "total_com_juros": total_final_escolhido,
-                            "parcelas": int(p_sol),
-                            "divida_restante": total_final_escolhido
-                        }
-                        st.session_state.df_emprestimos = pd.concat([st.session_state.df_emprestimos, pd.DataFrame([novo_emp])], ignore_index=True)
-                        salvar_dados_locais(ARQUIVO_EMPRESTIMOS, st.session_state.df_emprestimos)
-                        st.success("Crédito liberado em conta!")
-
-        st.divider()
-        st.markdown("#### 📊 Seus Contratos de Empréstimos Ativos")
-        if not e_user.empty:
-            st.dataframe(
-                e_user[["data", "valor_puro", "total_com_juros", "parcelas", "divida_restante"]].rename(columns={
-                    "data": "Data de Contratação",
-                    "valor_puro": "Valor Recebido (R$)",
-                    "total_com_juros": "Total com Juros (R$)",
-                    "parcelas": "Prazo (Meses)",
-                    "divida_restante": "Dívida Atual (R$)"
-                }),
-                use_container_width=True
-            )
+    with tabs[1]:
+        st.markdown("#### Extrato por Categoria")
+        if not tx_df.empty:
+            ganhos_df = tx_df[tx_df["tipo"] == "Ganho"].groupby("categoria")["valor"].sum().reset_index().rename(columns={"categoria":"Categoria","valor":"Total (R$)"})
+            gastos_df = tx_df[tx_df["tipo"] == "Gasto"].groupby("categoria")["valor"].sum().reset_index().rename(columns={"categoria":"Categoria","valor":"Total (R$)"})
+            colA, colB = st.columns(2)
+            with colA:
+                st.markdown("##### Ganhos")
+                st.dataframe(ganhos_df, use_container_width=True)
+            with colB:
+                st.markdown("##### Gastos")
+                st.dataframe(gastos_df, use_container_width=True)
+            st.markdown("##### Extrato completo")
+            st.dataframe(tx_df, use_container_width=True)
         else:
-            st.info("Você não possui contratos de empréstimo ativos no momento.")
+            st.info("Nenhuma movimentação registrada.")
+
+    with tabs[2]:
+        st.markdown("#### Solicitar Empréstimo")
+        st.write(f"Limite disponível: **R$ {max(0.0, limite_disponivel):,.2f}**")
+        v_sol = st.number_input("Valor solicitado (R$)", min_value=0.0, max_value=max(0.0, limite_disponivel), step=50.0, key="loan_val")
+        parcelas = st.slider("Parcelas (meses)", 1, 12, 1, key="loan_parc")
+        if st.button("Simular"):
+            taxa = 0.05
+            total = float(v_sol) * ((1 + taxa) ** parcelas)
+            st.info(f"Total com juros (5% a.m.): R$ {total:,.2f} — {parcelas}x de R$ {total/parcelas:,.2f}")
+        if st.button("Contratar Empréstimo"):
+            if v_sol > 0 and v_sol <= limite_disponivel:
+                add_loan(user_id, v_sol, parcelas)
+                st.success("Empréstimo contratado.")
+            else:
+                st.error("Valor inválido ou acima do limite disponível.")
+
+    st.divider()
+    st.markdown("#### Seus empréstimos")
+    if not loans_df.empty:
+        st.dataframe(loans_df, use_container_width=True)
+    else:
+        st.info("Sem contratos de empréstimo ativos.")
+
+# -------------------------
+# Main
+# -------------------------
+def main():
+    st.title("🔱 Apex | Banco Digital")
+    if not st.session_state.logado:
+        login_screen()
+        return
+
+    user_info = st.session_state.user
+    st.sidebar.markdown(f"👤 **{user_info['username']}**")
+    if st.sidebar.button("Sair"):
+        st.session_state.logado = False
+        st.session_state.user = None
+        st.experimental_rerun()
+
+    if user_info["role"].strip().lower() == "desenvolvedor":
+        admin_panel(user_info)
+    else:
+        client_panel(user_info)
 
 if __name__ == "__main__":
-    meu_banco_digital()
+    main()
