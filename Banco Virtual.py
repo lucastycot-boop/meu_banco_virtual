@@ -2,15 +2,14 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 
-# 1. Configuração de Layout Nativa (O próprio Streamlit cuida do visual escuro)
+# 1. Configuração de Layout Nativa (Sem códigos adicionais de estilo)
 st.set_page_config(
     page_title="Apex Banco Digital", 
     page_icon="🔱", 
-    layout="wide", 
-    initial_sidebar_state="expanded"
+    layout="wide"
 )
 
-# 2. Conexão com o Storage Nativo
+# 2. Conexão Estável com o Storage Nativo (Opção 2)
 try:
     conn = st.connection("storage", type="stlite")
 except Exception:
@@ -33,7 +32,7 @@ def salvar_dados_permanentes(chave, df):
         except:
             pass
 
-# 3. Inicialização dos Bancos de Dados
+# 3. Inicialização e Carga dos Bancos de Dados
 df_contas = carregar_dados_permanentes("banco_contas", [{"usuario": "Lucas", "senha": "1702", "role": "desenvolvedor", "limite_emprestimo": 5000.0}])
 
 df_transacoes = carregar_dados_permanentes("banco_transacoes", [])
@@ -47,9 +46,8 @@ if df_emprestimos.empty:
 def meu_banco_digital():
     global df_contas, df_transacoes, df_emprestimos
     
-    # Cabeçalho Limpo e Moderno
     st.title("🔱 Apex | Sistema Bancário Inteligente")
-    
+
     if "logado" not in st.session_state: st.session_state.logado = False
     if "usuario_atual" not in st.session_state: st.session_state.usuario_atual = None
     if "limite_padrao" not in st.session_state: st.session_state.limite_padrao = 2000.0
@@ -92,13 +90,13 @@ def meu_banco_digital():
                             st.success("Conta criada! Vá para a aba Entrar.")
         return
 
-    # CONFIGURAÇÃO SESSÃO
+    # CONFIGURAÇÃO DA SESSÃO ATUAL
     user = st.session_state.usuario_atual
     dados_user = df_contas[df_contas["usuario"] == user].iloc[0]
 
     # BARRA LATERAL
     st.sidebar.markdown(f"### 🚪 Conta: **{user}**")
-    if st.sidebar.button("Desconectar", type="destructive", use_container_width=True):
+    if st.sidebar.button("Desconectar", type="destructive", use_container_width=True, key="btn_logout_global"):
         st.session_state.logado = False
         st.session_state.usuario_atual = None
         st.rerun()
