@@ -233,7 +233,7 @@ def meu_banco_digital():
         if not t_user.empty:
             # Agrupamento matemático inteligente por Mês/Ano
             linhas_mes = []
-            for mes em t_user["mes_ano"].unique():
+            for mes in t_user["mes_ano"].unique():
                 dados_mes = t_user[t_user["mes_ano"] == mes]
                 g_mes = dados_mes[dados_mes["tipo"] == "Ganho"]["valor"].sum()
                 p_mes = dados_mes[dados_mes["tipo"] == "Gasto"]["valor"].sum()
