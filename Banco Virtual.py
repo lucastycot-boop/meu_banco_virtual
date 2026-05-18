@@ -2,14 +2,14 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 
-# 1. Configuração de Layout Nativa
+# 1. Configuração Básica de Layout
 st.set_page_config(
     page_title="Apex Banco Digital", 
     page_icon="🔱", 
     layout="wide"
 )
 
-# 2. Conexão com o Storage Nativo
+# 2. Ponte de Dados Permanente
 try:
     conn = st.connection("storage", type="stlite")
 except Exception:
@@ -32,7 +32,7 @@ def salvar_dados_permanentes(chave, df):
         except:
             pass
 
-# 3. Inicialização e Carga dos Bancos de Dados
+# 3. Inicialização dos Bancos de Dados
 df_contas = carregar_dados_permanentes("banco_contas", [{"usuario": "Lucas", "senha": "1702", "role": "desenvolvedor", "limite_emprestimo": 5000.0}])
 
 df_transacoes = carregar_dados_permanentes("banco_transacoes", [])
@@ -43,16 +43,25 @@ df_emprestimos = carregar_dados_permanentes("banco_emprestimos", [])
 if df_emprestimos.empty:
     df_emprestimos = pd.DataFrame(columns=["id", "usuario", "data", "valor_puro", "total_com_juros", "parcelas", "divida_restante"])
 
+# Funções auxiliares para evitar loops na API
+def acao_logout():
+    st.session_state.logado = False
+    st.session_state.usuario_atual = None
+
 def meu_banco_digital():
     global df_contas, df_transacoes, df_emprestimos
     
     st.title("🔱 Apex | Sistema Bancário Inteligente")
 
-    if "logado" not in st.session_state: st.session_state.logado = False
-    if "usuario_atual" not in st.session_state: st.session_state.usuario_atual = None
-    if "limite_padrao" not in st.session_state: st.session_state.limite_padrao = 2000.0
+    # Inicialização de variáveis de sessão básicas
+    if "logado" not in st.session_state: 
+        st.session_state.logado = False
+    if "usuario_atual" not in st.session_state: 
+        st.session_state.usuario_atual = None
+    if "limite_padrao" not in st.session_state: 
+        st.session_state.limite_padrao = 2000.0
 
-    # --- 1. TELA DE ACESSO (SE NÃO ESTIVER LOGADO) ---
+    # --- TELA 1: ACESSO E LOGON ---
     if not st.session_state.logado:
         col_cen, col_box, col_dir = st.columns([1, 2, 1])
         with col_box:
@@ -63,7 +72,7 @@ def meu_banco_digital():
                 with aba_login:
                     u_input = st.text_input("Usuário", key="l_user").strip()
                     s_input = st.text_input("Senha", type="password", key="l_pass").strip()
-                    if st.button("Acessar Banco", use_container_width=True, type="primary", key="btn_fazer_login"):
+                    if st.button("Acessar Banco", use_container_width=True, type="primary", key="btn_executar_login"):
                         rows = df_contas[df_contas["usuario"].astype(str).str.strip() == str(u_input)]
                         if not rows.empty and str(rows.iloc[0]["senha"]).strip() == str(s_input):
                             st.session_state.logado = True
@@ -76,7 +85,7 @@ def meu_banco_digital():
                     n_user = st.text_input("Nome de Usuário", key="c_user").strip()
                     n_pass = st.text_input("Senha de Acesso", type="password", key="c_pass").strip()
                     c_pass = st.text_input("Confirme a Senha", type="password", key="c_cpass").strip()
-                    if st.button("Cadastrar no Sistema", use_container_width=True, key="btn_fazer_cadastro"):
+                    if st.button("Cadastrar no Sistema", use_container_width=True, key="btn_executar_cadastro"):
                         if not n_user or not n_pass: 
                             st.warning("Preencha todos os campos!")
                         elif n_user in df_contas["usuario"].astype(str).values: 
@@ -90,18 +99,15 @@ def meu_banco_digital():
                             st.success("Conta criada! Vá para a aba Entrar.")
         return
 
-    # --- 2. CONFIGURAÇÃO DA SESSÃO ATIVA ---
+    # --- TELA 2: PAINEL RESTRITO (LOGADO) ---
     user = st.session_state.usuario_atual
     dados_user = df_contas[df_contas["usuario"] == user].iloc[0]
 
-    # Barra Lateral Global Unificada (Renderiza exatamente igual independente do nível de acesso)
+    # Menu Lateral Seguro usando on_click callback para evitar exceções de concorrência
     st.sidebar.markdown(f"### 🚪 Conta: **{user}**")
-    if st.sidebar.button("Desconectar", type="destructive", use_container_width=True, key="btn_logout_seguro_global"):
-        st.session_state.logado = False
-        st.session_state.usuario_atual = None
-        st.rerun()
+    st.sidebar.button("Desconectar", type="destructive", use_container_width=True, key="btn_sistema_logout_final", on_click=acao_logout)
 
-    # --- 3. FLUXO DE TELAS PARALELO (EVITA CONFLITO DE RENDERS) ---
+    # Divisão de rotas limpa entre Administrador e Cliente Comum
     if dados_user["role"] == "desenvolvedor":
         st.sidebar.success("⚡ Administrador Ativo")
         st.header("🛠️ Painel de Controle Admin")
@@ -149,7 +155,7 @@ def meu_banco_digital():
             st.dataframe(df_emprestimos, use_container_width=True)
 
     else:
-        # --- PAINEL EXCLUSIVO DO CLIENTE ---
+        # --- PAINEL DO CLIENTE ---
         t_user = df_transacoes[df_transacoes["usuario"] == user] if not df_transacoes.empty else pd.DataFrame()
         ganhos_totais = t_user[t_user["tipo"] == "Ganho"]["valor"].sum() if not t_user.empty else 0.0
         gastos_totais = t_user[t_user["tipo"] == "Gasto"]["valor"].sum() if not t_user.empty else 0.0
