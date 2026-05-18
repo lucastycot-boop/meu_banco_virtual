@@ -43,17 +43,12 @@ df_emprestimos = carregar_dados_permanentes("banco_emprestimos", [])
 if df_emprestimos.empty:
     df_emprestimos = pd.DataFrame(columns=["id", "usuario", "data", "valor_puro", "total_com_juros", "parcelas", "divida_restante"])
 
-# Funções auxiliares para evitar loops na API
-def acao_logout():
-    st.session_state.logado = False
-    st.session_state.usuario_atual = None
-
 def meu_banco_digital():
     global df_contas, df_transacoes, df_emprestimos
     
     st.title("🔱 Apex | Sistema Bancário Inteligente")
 
-    # Inicialização de variáveis de sessão básicas
+    # Inicialização segura de variáveis de sessão
     if "logado" not in st.session_state: 
         st.session_state.logado = False
     if "usuario_atual" not in st.session_state: 
@@ -103,9 +98,17 @@ def meu_banco_digital():
     user = st.session_state.usuario_atual
     dados_user = df_contas[df_contas["usuario"] == user].iloc[0]
 
-    # Menu Lateral Seguro usando on_click callback para evitar exceções de concorrência
-    st.sidebar.markdown(f"### 🚪 Conta: **{user}**")
-    st.sidebar.button("Desconectar", type="destructive", use_container_width=True, key="btn_sistema_logout_final", on_click=acao_logout)
+    # Cabeçalho Principal com perfil e botão de desconexão linear (Longe da Sidebar)
+    c_perfil, c_logout = st.columns([5, 1])
+    with c_perfil:
+        st.markdown(f"👤 Conectado como: **{user}**")
+    with c_logout:
+        if st.button("🚪 Sair do Sistema", type="destructive", use_container_width=True, key="btn_logout_linear_topo"):
+            st.session_state.logado = False
+            st.session_state.usuario_atual = None
+            st.rerun()
+
+    st.divider()
 
     # Divisão de rotas limpa entre Administrador e Cliente Comum
     if dados_user["role"] == "desenvolvedor":
