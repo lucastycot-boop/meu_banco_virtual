@@ -1,15 +1,16 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-from streamlit_autorefresh import st_autorefresh
 
-# 1. Configuração de Layout
-st.set_page_config(page_title="Apex Banco Digital", page_icon="🔱", layout="wide")
+# 1. Configuração de Layout Nativa (O próprio Streamlit cuida do visual escuro)
+st.set_page_config(
+    page_title="Apex Banco Digital", 
+    page_icon="🔱", 
+    layout="wide", 
+    initial_sidebar_state="expanded"
+)
 
-# Atualização em tempo real (A cada 4 segundos para não sobrecarregar)
-st_autorefresh(interval=4000, key="datarefresh_global")
-
-# 2. Conexão Segura com o Storage Nativo (Opção 2)
+# 2. Conexão com o Storage Nativo
 try:
     conn = st.connection("storage", type="stlite")
 except Exception:
@@ -32,7 +33,7 @@ def salvar_dados_permanentes(chave, df):
         except:
             pass
 
-# 3. Inicialização e Carga dos Bancos de Dados
+# 3. Inicialização dos Bancos de Dados
 df_contas = carregar_dados_permanentes("banco_contas", [{"usuario": "Lucas", "senha": "1702", "role": "desenvolvedor", "limite_emprestimo": 5000.0}])
 
 df_transacoes = carregar_dados_permanentes("banco_transacoes", [])
@@ -43,19 +44,12 @@ df_emprestimos = carregar_dados_permanentes("banco_emprestimos", [])
 if df_emprestimos.empty:
     df_emprestimos = pd.DataFrame(columns=["id", "usuario", "data", "valor_puro", "total_com_juros", "parcelas", "divida_restante"])
 
-# Estilização CSS segura para o Modo Escuro
-st.markdown("""
-    <style>
-    div[data-testid="stMetricValue"] { font-size: 28px; color: #00ffcc; font-weight: bold; }
-    div[data-testid="stMetricLabel"] { font-size: 14px; color: #a3a8b4; }
-    .stButton>button { border-radius: 8px; font-weight: bold; }
-    </style>
-""", unsafe_html=True)
-
 def meu_banco_digital():
     global df_contas, df_transacoes, df_emprestimos
+    
+    # Cabeçalho Limpo e Moderno
     st.title("🔱 Apex | Sistema Bancário Inteligente")
-
+    
     if "logado" not in st.session_state: st.session_state.logado = False
     if "usuario_atual" not in st.session_state: st.session_state.usuario_atual = None
     if "limite_padrao" not in st.session_state: st.session_state.limite_padrao = 2000.0
@@ -86,7 +80,7 @@ def meu_banco_digital():
                     c_pass = st.text_input("Confirme a Senha", type="password", key="c_cpass").strip()
                     if st.button("Cadastrar no Sistema", use_container_width=True):
                         if not n_user or not n_pass: 
-                            st.warning("Preencha os campos!")
+                            st.warning("Preencha todos os campos!")
                         elif n_user in df_contas["usuario"].astype(str).values: 
                             st.error("Este usuário já existe!")
                         elif n_pass != c_pass: 
@@ -128,7 +122,7 @@ def meu_banco_digital():
                     lim_atual = float(df_contas.loc[idx_u, "limite_emprestimo"])
                     
                     novo_limite = st.number_input(f"Novo Limite (Atual: R$ {lim_atual:.2f}):", min_value=0.0, step=100.0, value=lim_atual)
-                    if st.button("Aplicar Novo Limite", type="primary"):
+                    if st.button("Aplicar Novo Limite", type="primary", key="btn_mudar_limite_adm"):
                         df_contas.loc[idx_u, "limite_emprestimo"] = novo_limite
                         salvar_dados_permanentes("banco_contas", df_contas)
                         st.success("Limite modificado com sucesso!")
@@ -140,7 +134,7 @@ def meu_banco_digital():
                 st.markdown("#### ❌ Excluir Conta de Cliente")
                 if lista_clientes:
                     user_excluir = st.selectbox("Selecione a conta para deletar:", lista_clientes, key="sel_u_excluir")
-                    if st.button("Confirmar Exclusão Definitiva", type="destructive"):
+                    if st.button("Confirmar Exclusão Definitiva", type="destructive", key="btn_deletar_conta_adm"):
                         df_contas = df_contas[df_contas["usuario"] != user_excluir].reset_index(drop=True)
                         df_transacoes = df_transacoes[df_transacoes["usuario"] != user_excluir].reset_index(drop=True)
                         df_emprestimos = df_emprestimos[df_emprestimos["usuario"] != user_excluir].reset_index(drop=True)
@@ -157,7 +151,7 @@ def meu_banco_digital():
             st.dataframe(df_emprestimos, use_container_width=True)
         return
 
-    # --- PAINEL DO CLIENTE PREMIUM ---
+    # --- PAINEL DO CLIENTE ---
     t_user = df_transacoes[df_transacoes["usuario"] == user] if not df_transacoes.empty else pd.DataFrame()
     ganhos_totais = t_user[t_user["tipo"] == "Ganho"]["valor"].sum() if not t_user.empty else 0.0
     gastos_totais = t_user[t_user["tipo"] == "Gasto"]["valor"].sum() if not t_user.empty else 0.0
@@ -193,7 +187,7 @@ def meu_banco_digital():
                 st.markdown("#### 📈 Lançar Entrada (Ganho/Pix)")
                 area_ganho = st.text_input("Classificação (Ex: Salário, Mesada)", key="a_ganho").strip().capitalize()
                 val_ganho = st.number_input("Valor Recebido (R$)", min_value=0.0, step=10.0, key="v_ganho")
-                if st.button("Registrar Entrada", use_container_width=True):
+                if st.button("Registrar Entrada", use_container_width=True, key="btn_salvar_entrada_cli"):
                     if val_ganho > 0 and area_ganho:
                         novo_id = int(df_transacoes["id"].max() + 1) if not df_transacoes.empty else 1
                         nova_t = pd.DataFrame([{
@@ -210,7 +204,7 @@ def meu_banco_digital():
                 st.markdown("#### 📉 Lançar Saída (Gasto/Compra)")
                 area_gasto = st.text_input("Classificação (Ex: Roupa, Lanche)", key="a_gasto").strip().capitalize()
                 val_gasto = st.number_input("Valor Gasto (R$)", min_value=0.0, step=10.0, key="v_gasto")
-                if st.button("Registrar Saída", use_container_width=True):
+                if st.button("Registrar Saída", use_container_width=True, key="btn_salvar_saida_cli"):
                     if val_gasto > 0 and area_gasto:
                         novo_id = int(df_transacoes["id"].max() + 1) if not df_transacoes.empty else 1
                         nova_t = pd.DataFrame([{
@@ -261,7 +255,7 @@ def meu_banco_digital():
                 total_juros = float(v_sol * ((1 + 0.05) ** p_sol))
                 st.warning(f"Simulação: {p_sol}x de R$ {(total_juros/p_sol):,.2f} | Total final: R$ {total_juros:,.2f}")
                 
-                if st.button("Contratar Empréstimo", type="primary", use_container_width=True):
+                if st.button("Contratar Empréstimo", type="primary", use_container_width=True, key="btn_pegar_emprestimo_cli"):
                     n_id_emp = int(df_emprestimos["id"].max() + 1) if not df_emprestimos.empty else 1
                     novo_emp = pd.DataFrame([{
                         "id": n_id_emp, "usuario": user, "data": datetime.now().strftime("%d/%m/%Y"),
