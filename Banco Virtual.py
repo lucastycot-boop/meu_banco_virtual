@@ -5,7 +5,10 @@ import json
 import os
 import tempfile
 
-# Arquivos
+# ---------- Configuração de Página ----------
+st.set_page_config(page_title="Apex Banco Digital", page_icon="🔱", layout="wide")
+
+# ---------- Nomes dos arquivos ----------
 ARQUIVO_CONTAS = "banco_contas.json"
 ARQUIVO_TRANSACOES = "banco_transacoes.json"
 ARQUIVO_EMPRESTIMOS = "banco_emprestimos.json"
@@ -16,6 +19,7 @@ def salvar_dados_locais(arquivo: str, df: pd.DataFrame):
     try:
         dados = df.to_dict(orient="records")
         dirpath = os.path.dirname(os.path.abspath(arquivo)) or "."
+        # cria arquivo temporário no mesmo diretório para garantir atomicidade
         with tempfile.NamedTemporaryFile("w", delete=False, dir=dirpath, encoding="utf-8") as tmp:
             json.dump(dados, tmp, ensure_ascii=False, indent=4)
             tmp_name = tmp.name
@@ -30,9 +34,7 @@ def carregar_dados_locais(arquivo: str, dados_iniciais):
             with open(arquivo, "r", encoding="utf-8") as f:
                 dados = json.load(f)
             df = pd.DataFrame(dados)
-            # Garantir colunas mínimas para evitar KeyError depois
-            if df.empty:
-                return pd.DataFrame(dados_iniciais)
+            # garantir colunas mínimas
             return df
         except Exception as e:
             st.warning(f"Atenção: arquivo {arquivo} corrompido ou inválido. Recriando. ({e})")
@@ -46,7 +48,7 @@ if "df_contas" not in st.session_state:
     st.session_state.df_contas = carregar_dados_locais(ARQUIVO_CONTAS, [
         {"usuario": "Lucas", "senha": "1702", "role": "desenvolvedor", "limite_emprestimo": 5000.0}
     ])
-# garantir colunas e tipos
+# garantir estrutura mínima
 if st.session_state.df_contas is None or st.session_state.df_contas.empty:
     st.session_state.df_contas = pd.DataFrame([{"usuario": "Lucas", "senha": "1702", "role": "desenvolvedor", "limite_emprestimo": 5000.0}])
 
@@ -65,19 +67,21 @@ st.session_state.setdefault("logado", False)
 st.session_state.setdefault("usuario_atual", None)
 st.session_state.setdefault("limite_padrao", 2000.0)
 
-# ---------- Funções utilitárias ----------
+# ---------- Utilitários ----------
 def next_id(df: pd.DataFrame, col: str = "id") -> int:
+    """Gera próximo id de forma robusta mesmo com colunas ausentes ou valores não numéricos."""
     if col in df.columns and not df.empty:
         try:
-            return int(df[col].max()) + 1
+            max_val = pd.to_numeric(df[col], errors="coerce").max(skipna=True)
+            return int(max_val or 0) + 1
         except Exception:
-            return int(pd.to_numeric(df[col], errors="coerce").max(skipna=True) or 0) + 1
+            return 1
     return 1
 
 def usuario_existe(df: pd.DataFrame, usuario: str) -> bool:
     return usuario.strip().lower() in df["usuario"].astype(str).str.strip().str.lower().values
 
-# ---------- Interface principal (mantendo estética) ----------
+# ---------- Interface principal ----------
 def meu_banco_digital():
     df_contas = st.session_state.df_contas
     df_transacoes = st.session_state.df_transacoes
@@ -85,7 +89,7 @@ def meu_banco_digital():
 
     st.title("🔱 Apex | Sistema Bancário Inteligente")
 
-    # TELA DE LOGIN / CADASTRO
+    # --- TELA 1: ACESSO E LOGON ---
     if not st.session_state.logado:
         col_cen, col_box, col_dir = st.columns([1, 2, 1])
         with col_box:
@@ -131,9 +135,8 @@ def meu_banco_digital():
                             st.success("Conta criada com sucesso! Faça login na aba Entrar.")
         return
 
-    # PAINEL RESTRITO
+    # --- TELA 2: PAINEL RESTRITO ---
     user = st.session_state.usuario_atual
-    # buscar dados do usuário com correspondência exata (preservando case original)
     dados_user_row = st.session_state.df_contas[st.session_state.df_contas["usuario"].astype(str).str.strip() == str(user).strip()]
     if dados_user_row.empty:
         st.error("Usuário não encontrado na base. Faça logout e tente novamente.")
@@ -153,7 +156,7 @@ def meu_banco_digital():
 
     st.divider()
 
-    # ROTA ADMIN
+    # --- ROTA: ADMINISTRADOR ---
     if str(dados_user.get("role", "")).strip().lower() == "desenvolvedor":
         st.sidebar.success("⚡ Administrador Ativo")
         st.header("🛠️ Painel de Controle Admin")
@@ -162,23 +165,32 @@ def meu_banco_digital():
 
         with tab_usuarios:
             st.markdown("##### Todos os Usuários Registrados")
-            # mostrar cópia para evitar edição direta
             st.dataframe(st.session_state.df_contas.reset_index(drop=True), use_container_width=True)
 
             with st.container():
                 st.markdown("#### ⚙️ Alterar Limite de Crédito")
-                # lista de clientes (filtrar desenvolvedores, case-insensitive)
                 mask_clientes = st.session_state.df_contas["role"].astype(str).str.strip().str.lower() != "desenvolvedor"
                 lista_clientes = st.session_state.df_contas.loc[mask_clientes, "usuario"].astype(str).tolist()
                 if lista_clientes:
                     u_limite = st.selectbox("Selecione o Cliente:", lista_clientes, key="sel_u_limite")
-                    idx_u = st.session_state.df_contas[st.session_state.df_contas["usuario"] == u_limite].index[0]
-                    lim_atual = float(st.session_state.df_contas.loc[idx_u, "limite_emprestimo"])
-                    novo_limite = st.number_input(f"Novo Limite (Atual: R$ {lim_atual:.2f}):", min_value=0.0, step=100.0, value=lim_atual)
-                    if st.button("Aplicar Novo Limite", type="primary", key="btn_mudar_limite_adm"):
-                        st.session_state.df_contas.loc[idx_u, "limite_emprestimo"] = novo_limite
-                        salvar_dados_locais(ARQUIVO_CONTAS, st.session_state.df_contas)
-                        st.success("Limite modificado com sucesso!")
+                    matches = st.session_state.df_contas[st.session_state.df_contas["usuario"].astype(str).str.strip() == str(u_limite).strip()]
+                    if matches.empty:
+                        st.error("Cliente selecionado não encontrado. Atualize a página e tente novamente.")
+                    else:
+                        idx_u = matches.index.tolist()[0]
+                        raw_lim = st.session_state.df_contas.loc[idx_u, "limite_emprestimo"] if "limite_emprestimo" in st.session_state.df_contas.columns else 0.0
+                        try:
+                            lim_atual = float(raw_lim) if pd.notna(raw_lim) else 0.0
+                        except Exception:
+                            lim_atual = 0.0
+                        novo_limite = st.number_input(f"Novo Limite (Atual: R$ {lim_atual:.2f}):", min_value=0.0, step=100.0, value=lim_atual)
+                        if st.button("Aplicar Novo Limite", type="primary", key="btn_mudar_limite_adm"):
+                            try:
+                                st.session_state.df_contas.loc[idx_u, "limite_emprestimo"] = float(novo_limite)
+                                salvar_dados_locais(ARQUIVO_CONTAS, st.session_state.df_contas)
+                                st.success("Limite modificado com sucesso!")
+                            except Exception as e:
+                                st.error(f"Erro ao atualizar limite: {e}")
                 else:
                     st.info("Nenhum cliente cadastrado.")
 
@@ -188,13 +200,16 @@ def meu_banco_digital():
                     user_excluir = st.selectbox("Selecione a conta para deletar:", lista_clientes, key="sel_u_excluir")
                     confirm = st.checkbox("Confirmo exclusão permanente desta conta", key="chk_confirm_delete")
                     if st.button("Confirmar Exclusão Definitiva", key="btn_deletar_conta_adm") and confirm:
-                        st.session_state.df_contas = st.session_state.df_contas[st.session_state.df_contas["usuario"] != user_excluir].reset_index(drop=True)
-                        st.session_state.df_transacoes = st.session_state.df_transacoes[st.session_state.df_transacoes["usuario"] != user_excluir].reset_index(drop=True)
-                        st.session_state.df_emprestimos = st.session_state.df_emprestimos[st.session_state.df_emprestimos["usuario"] != user_excluir].reset_index(drop=True)
-                        salvar_dados_locais(ARQUIVO_CONTAS, st.session_state.df_contas)
-                        salvar_dados_locais(ARQUIVO_TRANSACOES, st.session_state.df_transacoes)
-                        salvar_dados_locais(ARQUIVO_EMPRESTIMOS, st.session_state.df_emprestimos)
-                        st.success("Conta removida com sucesso!")
+                        if user_excluir not in st.session_state.df_contas["usuario"].astype(str).values:
+                            st.error("Conta não encontrada. Atualize e tente novamente.")
+                        else:
+                            st.session_state.df_contas = st.session_state.df_contas[st.session_state.df_contas["usuario"] != user_excluir].reset_index(drop=True)
+                            st.session_state.df_transacoes = st.session_state.df_transacoes[st.session_state.df_transacoes["usuario"] != user_excluir].reset_index(drop=True)
+                            st.session_state.df_emprestimos = st.session_state.df_emprestimos[st.session_state.df_emprestimos["usuario"] != user_excluir].reset_index(drop=True)
+                            salvar_dados_locais(ARQUIVO_CONTAS, st.session_state.df_contas)
+                            salvar_dados_locais(ARQUIVO_TRANSACOES, st.session_state.df_transacoes)
+                            salvar_dados_locais(ARQUIVO_EMPRESTIMOS, st.session_state.df_emprestimos)
+                            st.success("Conta removida com sucesso!")
                 else:
                     st.info("Nenhum cliente para excluir.")
 
@@ -204,7 +219,7 @@ def meu_banco_digital():
         with tab_emprestimos_adm:
             st.dataframe(st.session_state.df_emprestimos.reset_index(drop=True), use_container_width=True)
 
-    # ROTA CLIENTE (mantive layout e lógica)
+    # --- ROTA: CLIENTE ---
     else:
         t_user = st.session_state.df_transacoes[st.session_state.df_transacoes["usuario"] == user] if not st.session_state.df_transacoes.empty else pd.DataFrame()
         ganhos_totais = t_user[t_user["tipo"] == "Ganho"]["valor"].sum() if not t_user.empty else 0.0
@@ -215,7 +230,7 @@ def meu_banco_digital():
         divida_atual = e_user["divida_restante"].sum() if not e_user.empty else 0.0
 
         saldo_real = (ganhos_totais + total_recebido_emprestimo) - gastos_totais
-        limite_disponivel = float(dados_user["limite_emprestimo"]) - total_recebido_emprestimo
+        limite_disponivel = float(dados_user.get("limite_emprestimo", 0.0)) - total_recebido_emprestimo
 
         st.markdown(f"### 👋 Olá, **{user}**")
 
