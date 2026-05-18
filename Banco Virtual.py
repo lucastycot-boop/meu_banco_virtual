@@ -98,7 +98,7 @@ def meu_banco_digital():
     user = st.session_state.usuario_atual
     dados_user = df_contas[df_contas["usuario"] == user].iloc[0]
 
-    # Cabeçalho Principal com perfil e botão de desconexão (Sem type="destructive")
+    # Cabeçalho Principal com perfil e botão de desconexão
     c_perfil, c_logout = st.columns([5, 1])
     with c_perfil:
         st.markdown(f"👤 Conectado como: **{user}**")
@@ -136,12 +136,13 @@ def meu_banco_digital():
                 else:
                     st.info("Nenhum cliente cadastrado.")
             
-            st.markdown("<br>", unsafe_html=True)
+            # CORREÇÃO AQUI: unsafe_allow_html ao invés de unsafe_html
+            st.markdown("<br>", unsafe_allow_html=True)
+            
             with st.container(border=True):
                 st.markdown("#### ❌ Excluir Conta de Cliente")
                 if lista_clientes:
                     user_excluir = st.selectbox("Selecione a conta para deletar:", lista_clientes, key="sel_u_excluir")
-                    # Removido o type="destructive" daqui também!
                     if st.button("Confirmar Exclusão Definitiva", key="btn_deletar_conta_adm"):
                         df_contas = df_contas[df_contas["usuario"] != user_excluir].reset_index(drop=True)
                         df_transacoes = df_transacoes[df_transacoes["usuario"] != user_excluir].reset_index(drop=True)
