@@ -2,10 +2,10 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 
-st.set_page_config(page_title="Banco Simples", page_icon="💳", layout="wide")
+st.set_page_config(page_title="Banco Digital", page_icon="💳", layout="wide")
 
 # -------------------------
-# Dados em memória (sem banco externo)
+# Dados em memória
 # -------------------------
 if "usuarios" not in st.session_state:
     st.session_state.usuarios = {"admin": {"senha": "1702", "role": "admin", "limite": 5000}}
@@ -85,7 +85,13 @@ else:
         cat = st.text_input("Categoria")
         val = st.number_input("Valor", min_value=0.0, step=10.0)
         if st.button("Registrar"):
-            st.session_state.transacoes.append({"user": user, "data": datetime.now().strftime("%d/%m/%Y"), "tipo": tipo, "categoria": cat, "valor": val})
+            st.session_state.transacoes.append({
+                "user": user,
+                "data": datetime.now().strftime("%d/%m/%Y"),
+                "tipo": tipo,
+                "categoria": cat,
+                "valor": val
+            })
             st.success("Transação registrada.")
 
         # Empréstimo
@@ -94,7 +100,14 @@ else:
         parc = st.slider("Parcelas", 1, 12, 1)
         if st.button("Contratar"):
             total = v * ((1+0.05)**parc)
-            st.session_state.emprestimos.append({"user": user, "data": datetime.now().strftime("%d/%m/%Y"), "valor": v, "total": total, "parcelas": parc, "divida": total})
+            st.session_state.emprestimos.append({
+                "user": user,
+                "data": datetime.now().strftime("%d/%m/%Y"),
+                "valor": v,
+                "total": total,
+                "parcelas": parc,
+                "divida": total
+            })
             st.success("Empréstimo contratado.")
 
         # Extrato
