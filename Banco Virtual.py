@@ -15,12 +15,12 @@ def adicionar_meses(data_base, meses):
 def meu_banco_digital():
     st.title("💰 Banco Pessoal - Online 24h")
 
-    # 1. CONEXÃO COM O GOOGLE SHEETS
-    # Usamos o st.connection para fazer a ponte com a planilha
+   # 1. CONEXÃO COM O GOOGLE SHEETS
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
-        # Lê os dados em tempo real da planilha
-        df = conn.read(ttl="0d") 
+        df = conn.read(ttl="0d")
+        # Remove linhas totalmente em branco que o Google Sheets gera automaticamente
+        df = df.dropna(how="all")
     except Exception as e:
         st.error("Erro ao conectar à planilha. Verifique se configurou os Secrets no Streamlit Cloud.")
         st.stop()
