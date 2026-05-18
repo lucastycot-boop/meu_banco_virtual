@@ -4,24 +4,25 @@ from sqlite3 import Connection
 from datetime import datetime
 import pandas as pd
 import hashlib
-from typing import Optional, List, Dict
+from typing import Optional, Dict, List
 
 # -------------------------
-# Config
+# Configuração
 # -------------------------
 st.set_page_config(page_title="Apex Banco Digital", page_icon="🔱", layout="wide")
 DB_FILE = "apex_bank.db"
-ADMIN_USER = "Lucas"
-ADMIN_PASS = "1702"  # you can change this before deploying
+DEFAULT_ADMIN = {"username": "admin", "password": "1702", "role": "desenvolvedor", "limite": 5000.0}
 
 # -------------------------
-# Utilities
+# Utilitários de Banco
 # -------------------------
 def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
 def get_conn() -> Connection:
-    return sqlite3.connect(DB_FILE, check_same_thread=False)
+    conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 def init_db():
     conn = get_conn()
@@ -62,16 +63,19 @@ def init_db():
     """)
     conn.commit()
 
-    # ensure admin exists
-    cur.execute("SELECT id FROM users WHERE username = ?", (ADMIN_USER,))
+    # garante admin padrão
+    cur.execute("SELECT id FROM users WHERE username = ?", (DEFAULT_ADMIN["username"],))
     if cur.fetchone() is None:
         cur.execute(
             "INSERT INTO users (username, password_hash, role, limite_emprestimo, created_at) VALUES (?, ?, ?, ?, ?)",
-            (ADMIN_USER, hash_password(ADMIN_PASS), "desenvolvedor", 5000.0, datetime.now().isoformat())
+            (DEFAULT_ADMIN["username"], hash_password(DEFAULT_ADMIN["password"]), DEFAULT_ADMIN["role"], DEFAULT_ADMIN["limite"], datetime.now().isoformat())
         )
         conn.commit()
     conn.close()
 
+# -------------------------
+# Operações CRUD
+# -------------------------
 def create_user(username: str, password: str, limite: float = 2000.0, role: str = "usuario") -> bool:
     try:
         conn = get_conn()
@@ -85,6 +89,8 @@ def create_user(username: str, password: str, limite: float = 2000.0, role: str 
         return True
     except sqlite3.IntegrityError:
         return False
+    except Exception:
+        return False
 
 def authenticate(username: str, password: str) -> Optional[Dict]:
     conn = get_conn()
@@ -94,7 +100,7 @@ def authenticate(username: str, password: str) -> Optional[Dict]:
     row = cur.fetchone()
     conn.close()
     if row:
-        return {"id": row[0], "username": row[1], "role": row[2], "limite_emprestimo": float(row[3])}
+        return {"id": row["id"], "username": row["username"], "role": row["role"], "limite_emprestimo": float(row["limite_emprestimo"])}
     return None
 
 def get_user_by_username(username: str) -> Optional[Dict]:
@@ -104,7 +110,7 @@ def get_user_by_username(username: str) -> Optional[Dict]:
     row = cur.fetchone()
     conn.close()
     if row:
-        return {"id": row[0], "username": row[1], "role": row[2], "limite_emprestimo": float(row[3])}
+        return {"id": row["id"], "username": row["username"], "role": row["role"], "limite_emprestimo": float(row["limite_emprestimo"])}
     return None
 
 def list_clients() -> List[Dict]:
@@ -113,9 +119,9 @@ def list_clients() -> List[Dict]:
     cur.execute("SELECT id, username, role, limite_emprestimo, created_at FROM users WHERE LOWER(role) != 'desenvolvedor' ORDER BY username")
     rows = cur.fetchall()
     conn.close()
-    return [{"id": r[0], "username": r[1], "role": r[2], "limite_emprestimo": float(r[3]), "created_at": r[4]} for r in rows]
+    return [{"id": r["id"], "username": r["username"], "role": r["role"], "limite_emprestimo": float(r["limite_emprestimo"]), "created_at": r["created_at"]} for r in rows]
 
-def list_all_users() -> pd.DataFrame:
+def list_all_users_df() -> pd.DataFrame:
     conn = get_conn()
     df = pd.read_sql_query("SELECT id, username, role, limite_emprestimo, created_at FROM users ORDER BY id", conn)
     conn.close()
@@ -170,21 +176,21 @@ def delete_user(user_id: int):
     conn.close()
 
 # -------------------------
-# Initialize DB
+# Inicialização
 # -------------------------
 init_db()
 
 # -------------------------
-# Session state defaults
+# Estado da sessão
 # -------------------------
 st.session_state.setdefault("logado", False)
-st.session_state.setdefault("user", None)  # dict with id, username, role, limite_emprestimo
+st.session_state.setdefault("user", None)
 
 # -------------------------
-# UI
+# Interface
 # -------------------------
-def login_screen():
-    st.subheader("🔒 Acesso")
+def login_register_ui():
+    st.subheader("🔒 Acesso ao Apex")
     tabs = st.tabs(["🔑 Entrar", "📝 Criar Conta"])
     with tabs[0]:
         user = st.text_input("Usuário", key="login_user")
@@ -218,13 +224,13 @@ def login_screen():
                 else:
                     st.error("Erro ao criar conta. Tente outro nome.")
 
-def admin_panel(user_info: Dict):
+def admin_ui(user_info: Dict):
     st.sidebar.success("⚡ Administrador")
-    st.header("🛠️ Painel Admin")
-    tabs = st.tabs(["👥 Usuários", "📊 Extratos", "🏦 Empréstimos"])
+    st.header("🛠️ Painel Administrador")
+    tabs = st.tabs(["👥 Usuários", "📊 Transações", "🏦 Empréstimos"])
     with tabs[0]:
         st.markdown("#### Todos os usuários")
-        df_users = list_all_users()
+        df_users = list_all_users_df()
         st.dataframe(df_users, use_container_width=True)
 
         st.markdown("#### Alterar limite de cliente")
@@ -274,11 +280,10 @@ def admin_panel(user_info: Dict):
         conn.close()
         st.dataframe(df_loans, use_container_width=True)
 
-def client_panel(user_info: Dict):
+def client_ui(user_info: Dict):
     st.header(f"👋 Olá, {user_info['username']}")
     user_id = user_info["id"]
 
-    # summary
     tx_df = get_transactions_for_user(user_id)
     loans_df = get_loans_for_user(user_id)
     ganhos = tx_df[tx_df["tipo"] == "Ganho"]["valor"].sum() if not tx_df.empty else 0.0
@@ -297,28 +302,24 @@ def client_panel(user_info: Dict):
     tabs = st.tabs(["💸 Nova Transação", "📊 Resumo", "🏛️ Empréstimos"])
     with tabs[0]:
         st.markdown("#### Registrar Ganho")
-        colg1, colg2 = st.columns([2,1])
-        with colg1:
-            cat_g = st.text_input("Categoria (Ex: Salário)", key="cat_ganho")
-            val_g = st.number_input("Valor (R$)", min_value=0.0, step=1.0, key="val_ganho")
-            if st.button("Registrar Ganho"):
-                if val_g > 0 and cat_g.strip():
-                    add_transaction(user_id, "Ganho", cat_g, val_g)
-                    st.success("Ganho registrado.")
-                else:
-                    st.warning("Preencha categoria e valor válido.")
+        cat_g = st.text_input("Categoria (Ex: Salário)", key="cat_ganho")
+        val_g = st.number_input("Valor (R$)", min_value=0.0, step=1.0, key="val_ganho")
+        if st.button("Registrar Ganho"):
+            if val_g > 0 and cat_g.strip():
+                add_transaction(user_id, "Ganho", cat_g, val_g)
+                st.success("Ganho registrado.")
+            else:
+                st.warning("Preencha categoria e valor válido.")
 
         st.markdown("#### Registrar Gasto")
-        colp1, colp2 = st.columns([2,1])
-        with colp1:
-            cat_p = st.text_input("Categoria (Ex: Alimentação)", key="cat_gasto")
-            val_p = st.number_input("Valor (R$)", min_value=0.0, step=1.0, key="val_gasto")
-            if st.button("Registrar Gasto"):
-                if val_p > 0 and cat_p.strip():
-                    add_transaction(user_id, "Gasto", cat_p, val_p)
-                    st.success("Gasto registrado.")
-                else:
-                    st.warning("Preencha categoria e valor válido.")
+        cat_p = st.text_input("Categoria (Ex: Alimentação)", key="cat_gasto")
+        val_p = st.number_input("Valor (R$)", min_value=0.0, step=1.0, key="val_gasto")
+        if st.button("Registrar Gasto"):
+            if val_p > 0 and cat_p.strip():
+                add_transaction(user_id, "Gasto", cat_p, val_p)
+                st.success("Gasto registrado.")
+            else:
+                st.warning("Preencha categoria e valor válido.")
 
     with tabs[1]:
         st.markdown("#### Extrato por Categoria")
@@ -342,7 +343,7 @@ def client_panel(user_info: Dict):
         st.write(f"Limite disponível: **R$ {max(0.0, limite_disponivel):,.2f}**")
         v_sol = st.number_input("Valor solicitado (R$)", min_value=0.0, max_value=max(0.0, limite_disponivel), step=50.0, key="loan_val")
         parcelas = st.slider("Parcelas (meses)", 1, 12, 1, key="loan_parc")
-        if st.button("Simular"):
+        if st.button("Simular Empréstimo"):
             taxa = 0.05
             total = float(v_sol) * ((1 + taxa) ** parcelas)
             st.info(f"Total com juros (5% a.m.): R$ {total:,.2f} — {parcelas}x de R$ {total/parcelas:,.2f}")
@@ -361,12 +362,12 @@ def client_panel(user_info: Dict):
         st.info("Sem contratos de empréstimo ativos.")
 
 # -------------------------
-# Main
+# Fluxo principal
 # -------------------------
 def main():
-    st.title("🔱 Apex | Banco Digital")
+    st.title("🔱 Apex Banco Digital")
     if not st.session_state.logado:
-        login_screen()
+        login_register_ui()
         return
 
     user_info = st.session_state.user
@@ -377,9 +378,9 @@ def main():
         st.experimental_rerun()
 
     if user_info["role"].strip().lower() == "desenvolvedor":
-        admin_panel(user_info)
+        admin_ui(user_info)
     else:
-        client_panel(user_info)
+        client_ui(user_info)
 
 if __name__ == "__main__":
     main()
