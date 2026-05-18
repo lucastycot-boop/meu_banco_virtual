@@ -32,7 +32,7 @@ def salvar_dados_permanentes(chave, df):
         except:
             pass
 
-# 3. Inicialização SEGURA na Memória de Sessão (Impede perda de dados ao mudar de aba)
+# 3. Inicialização Global e Sincronizada da Sessão
 if "df_contas" not in st.session_state:
     st.session_state.df_contas = carregar_dados_permanentes("banco_contas", [
         {"usuario": "Lucas", "senha": "1702", "role": "desenvolvedor", "limite_emprestimo": 5000.0}
@@ -52,14 +52,13 @@ if "df_emprestimos" not in st.session_state:
 
 
 def meu_banco_digital():
-    # Recupera os dados direto do Session State estável
+    # Garante que as variáveis locais usem sempre o estado vivo da memória
     df_contas = st.session_state.df_contas
     df_transacoes = st.session_state.df_transacoes
     df_emprestimos = st.session_state.df_emprestimos
     
     st.title("🔱 Apex | Sistema Bancário Inteligente")
 
-    # Inicialização de variáveis de controle
     if "logado" not in st.session_state: 
         st.session_state.logado = False
     if "usuario_atual" not in st.session_state: 
@@ -101,18 +100,18 @@ def meu_banco_digital():
                         else:
                             nova_c = pd.DataFrame([{"usuario": n_user, "senha": n_pass, "role": "usuario", "limite_emprestimo": float(st.session_state.limite_padrao)}])
                             
-                            # Atualiza no Session State primeiro para fixar na memória do app
+                            # Atualiza a memória de sessão global imediatamente
                             st.session_state.df_contas = pd.concat([df_contas, nova_c], ignore_index=True)
                             salvar_dados_permanentes("banco_contas", st.session_state.df_contas)
                             
-                            st.success("Conta criada com sucesso! Mude para a aba 'Entrar' e faça seu login.")
+                            st.success("Conta criada! Vá para a aba Entrar.")
         return
 
     # --- TELA 2: PAINEL RESTRITO (LOGADO) ---
     user = st.session_state.usuario_atual
     dados_user = df_contas[df_contas["usuario"] == user].iloc[0]
 
-    # Cabeçalho Principal com perfil e botão de desconexão
+    # Cabeçalho de Desconexão Linear
     c_perfil, c_logout = st.columns([5, 1])
     with c_perfil:
         st.markdown(f"👤 Conectado como: **{user}**")
@@ -124,7 +123,7 @@ def meu_banco_digital():
 
     st.divider()
 
-    # Divisão de rotas limpa entre Administrador e Cliente Comum
+    # --- ROTA: ADMINISTRADOR ---
     if dados_user["role"] == "desenvolvedor":
         st.sidebar.success("⚡ Administrador Ativo")
         st.header("🛠️ Painel de Controle Admin")
@@ -132,6 +131,7 @@ def meu_banco_digital():
         tab_usuarios, tab_transacoes_adm, tab_emprestimos_adm = st.tabs(["👥 Gerenciar Clientes", "📊 Extrato Geral", "🏦 Créditos Ativos"])
         
         with tab_usuarios:
+            st.markdown("##### Todos os Usuários Registrados na Sessão")
             st.dataframe(df_contas, use_container_width=True)
             
             with st.container(border=True):
@@ -145,13 +145,14 @@ def meu_banco_digital():
                     novo_limite = st.number_input(f"Novo Limite (Atual: R$ {lim_atual:.2f}):", min_value=0.0, step=100.0, value=lim_atual)
                     if st.button("Aplicar Novo Limite", type="primary", key="btn_mudar_limite_adm"):
                         df_contas.loc[idx_u, "limite_emprestimo"] = novo_limite
+                        st.session_state.df_contas = df_contas
                         salvar_dados_permanentes("banco_contas", df_contas)
                         st.success("Limite modificado com sucesso!")
+                        st.rerun()
                 else:
                     st.info("Nenhum cliente cadastrado.")
             
             st.markdown("<br>", unsafe_allow_html=True)
-            
             with st.container(border=True):
                 st.markdown("#### ❌ Excluir Conta de Cliente")
                 if lista_clientes:
@@ -174,7 +175,7 @@ def meu_banco_digital():
             st.dataframe(df_emprestimos, use_container_width=True)
 
     else:
-        # --- PAINEL DO CLIENTE ---
+        # --- ROTA: CLIENTE ---
         t_user = df_transacoes[df_transacoes["usuario"] == user] if not df_transacoes.empty else pd.DataFrame()
         ganhos_totais = t_user[t_user["tipo"] == "Ganho"]["valor"].sum() if not t_user.empty else 0.0
         gastos_totais = t_user[t_user["tipo"] == "Gasto"]["valor"].sum() if not t_user.empty else 0.0
@@ -240,7 +241,7 @@ def meu_banco_digital():
                             st.rerun()
 
         with tab_analytics:
-            st.subheader("📊 Valores Agrupados Inteligentes")
+            st.subheader("📊 Valores Agrupados Inteligentemente")
             if not t_user.empty:
                 cg1, cg2 = st.columns(2)
                 with cg1:
@@ -265,9 +266,10 @@ def meu_banco_digital():
 
         with tab_credito:
             st.subheader("🏛️ Crédito sob Medida Apex")
-            st.write(f"Limite Disponível: **R$ {max(0.0, limite_disponivel):,.2f}**")
+            st.write(f"Limite Disponível para Empréstimo: **R$ {max(0.0, limite_disponivel):,.2f}**")
             
             with st.container(border=True):
+                st.markdown("#### 📝 Solicitar Novo Crédito")
                 cc1, cc2 = st.columns(2)
                 with cc1:
                     v_sol = st.number_input("Valor Solicitado:", min_value=0.0, max_value=max(0.0, limite_disponivel), step=50.0)
@@ -276,7 +278,7 @@ def meu_banco_digital():
                     
                 if v_sol > 0:
                     total_juros = float(v_sol * ((1 + 0.05) ** p_sol))
-                    st.warning(f"Simulação: {p_sol}x de R$ {(total_juros/p_sol):,.2f} | Total final: R$ {total_juros:,.2f}")
+                    st.warning(f"Simulação: {p_sol}x de R$ {(total_juros/p_sol):,.2f} | Total final com juros: R$ {total_juros:,.2f}")
                     
                     if st.button("Contratar Empréstimo", type="primary", use_container_width=True, key="btn_pegar_emprestimo_cli"):
                         n_id_emp = int(df_emprestimos["id"].max() + 1) if not df_emprestimos.empty else 1
@@ -288,6 +290,23 @@ def meu_banco_digital():
                         salvar_dados_permanentes("banco_emprestimos", st.session_state.df_emprestimos)
                         st.success("Crédito liberado em conta!")
                         st.rerun()
+            
+            st.divider()
+            st.markdown("#### 📊 Seus Contratos de Empréstimos Ativos")
+            if not e_user.empty:
+                # Exibe os contratos ordenados um embaixo do outro, no formato de tabela limpa
+                st.dataframe(
+                    e_user[["data", "valor_puro", "total_com_juros", "parcelas", "divida_restante"]].rename(columns={
+                        "data": "Data de Contratação",
+                        "valor_puro": "Valor Recebido (R$)",
+                        "total_com_juros": "Total com Juros (R$)",
+                        "parcelas": "Prazo (Meses)",
+                        "divida_restante": "Dívida Atual (R$)"
+                    }), 
+                    use_container_width=True
+                )
+            else:
+                st.info("Você não possui contratos de empréstimo ativos no momento.")
 
 if __name__ == '__main__':
     meu_banco_digital()
