@@ -91,7 +91,6 @@ def meu_banco_digital():
             st.subheader("Contas Cadastradas")
             st.dataframe(df_contas, use_container_width=True)
             
-            # NOVO: AJUSTAR LIMITE DE CRÉDITO DO CLIENTE
             st.subheader("⚙️ Alterar Limite de Crédito de Cliente")
             lista_clientes = df_contas[df_contas["role"] != "desenvolvedor"]["usuario"].tolist()
             if lista_clientes:
@@ -112,7 +111,6 @@ def meu_banco_digital():
             st.subheader("❌ Excluir Conta de Cliente")
             if lista_clientes:
                 user_excluir = st.selectbox("Selecione a conta para deletar:", lista_clientes, key="sel_u_excluir")
-                # Mudança crucial: removemos parâmetros visuais conflitantes do st.button
                 if st.button("Confirmar Exclusão de Conta"):
                     banco_global["contas"] = df_contas[df_contas["usuario"] != user_excluir].reset_index(drop=True)
                     banco_global["transacoes"] = df_transacoes[df_transacoes["usuario"] != user_excluir].reset_index(drop=True)
@@ -243,10 +241,11 @@ def meu_banco_digital():
             p_solicitadas = st.number_input("Prazo (Meses):", min_value=1, max_value=12, value=1)
             
         if v_solicitado > 0:
-            v_parcela = (v_solicitado / p_solicitadas) * 1.05
-            t_pagar = v_parcela * p_solicitadas
+            # NOVO CÁLCULO: Juros Compostos de 5% cobrados a cada mês de prazo
+            t_pagar = float(v_solicitado * ((1 + 0.05) ** p_solicitadas))
+            v_parcela = t_pagar / p_solicitadas
             
-            st.warning(f"Proposta: {p_solicitadas}x de R$ {v_parcela:,.2f} | Total: R$ {t_pagar:,.2f}")
+            st.warning(f"Proposta: {p_solicitadas}x de R$ {v_parcela:,.2f} | Total com Juros: R$ {t_pagar:,.2f}")
             
             cronograma = []
             d_atual = datetime.now()
