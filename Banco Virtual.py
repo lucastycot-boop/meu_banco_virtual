@@ -4,25 +4,21 @@ from datetime import datetime
 
 st.set_page_config(page_title="Meu Banco Digital", page_icon="💰", layout="wide")
 
-# --- BANCO DE DADOS EM MEMÓRIA CACHE GLOBAL DO SERVER ---
-# Criamos um cache compartilhado para que os dados sobrevivam aos acessos
-
+# --- BANCO DE DADOS EM MEMÓRIA CACHE GLOBAL ---
 @st.cache_resource
 def obter_banco_global():
-    """Inicializa as tabelas na memória do servidor uma única vez"""
-    banco = {
+    """Inicializa as tabelas na memória global do servidor uma única vez"""
+    return {
         "contas": pd.DataFrame([{
             "usuario": "Lucas", "senha": "1702", "role": "desenvolvedor", "limite_emprestimo": 5000.0
         }]),
         "transacoes": pd.DataFrame(columns=["id", "usuario", "data", "mes_ano", "tipo", "area", "valor"]),
         "emprestimos": pd.DataFrame(columns=["id", "usuario", "data", "valor_puro", "total_com_juros", "parcelas", "divida_restante"])
     }
-    return banco
 
-# Carrega os dados persistentes na sessão global do servidor
 banco_global = obter_banco_global()
 
-# Auxiliar para datas
+# Auxiliar para cálculo de datas das parcelas
 def adicionar_meses(data_base, meses):
     ano = data_base.year + (data_base.month + meses - 1) // 12
     mes = (data_base.month + meses - 1) % 12 + 1
@@ -50,7 +46,7 @@ def meu_banco_digital():
             u_input = st.text_input("Usuário", key="l_user")
             s_input = st.text_input("Senha", type="password", key="l_pass")
             if st.button("Entrar no Banco", use_container_width=True):
-                rows = df_contas[df_contas["usuario"].astype(str).str.strip() == str (u_input).strip()]
+                rows = df_contas[df_contas["usuario"].astype(str).str.strip() == str(u_input).strip()]
                 if not rows.empty and str(rows.iloc[0]["senha"]) == str(s_input):
                     st.session_state.logado = True
                     st.session_state.usuario_atual = u_input
@@ -84,7 +80,7 @@ def meu_banco_digital():
         st.session_state.usuario_atual = None
         st.rerun()
 
-    # TELA DEV
+    # --- TELA EXCLUSIVA DO DESENVOLVEDOR ---
     if dados_user["role"] == "desenvolvedor":
         st.sidebar.success("⚡ Modo Desenvolvedor Ativo")
         st.header("🛠️ Painel de Controle Administrativo")
@@ -95,15 +91,33 @@ def meu_banco_digital():
             st.subheader("Contas Cadastradas")
             st.dataframe(df_contas, use_container_width=True)
             
+            # NOVO: AJUSTAR LIMITE DE CRÉDITO DO CLIENTE
+            st.subheader("⚙️ Alterar Limite de Crédito de Cliente")
+            lista_clientes = df_contas[df_contas["role"] != "desenvolvedor"]["usuario"].tolist()
+            if lista_clientes:
+                u_limite = st.selectbox("Selecione o cliente para alterar o limite:", lista_clientes, key="sel_u_limite")
+                idx_u = df_contas[df_contas["usuario"] == u_limite].index[0]
+                limite_atual = float(df_contas.loc[idx_u, "limite_emprestimo"])
+                
+                novo_limite = st.number_input(f"Definir Novo Limite para {u_limite} (Atual: R$ {limite_atual:.2f}):", min_value=0.0, step=100.0, value=limite_atual)
+                if st.button("Salvar Novo Limite", key="btn_limite"):
+                    banco_global["contas"].loc[idx_u, "limite_emprestimo"] = novo_limite
+                    st.success(f"Sucesso! O limite de {u_limite} foi alterado para R$ {novo_limite:.2f}.")
+                    st.rerun()
+            else:
+                st.info("Nenhum cliente cadastrado para ajustar limite.")
+            
+            st.divider()
+            
             st.subheader("❌ Excluir Conta de Cliente")
-            lista_usuarios = df_contas[df_contas["role"] != "desenvolvedor"]["usuario"].tolist()
-            if lista_usuarios:
-                user_excluir = st.selectbox("Selecione a conta para deletar:", lista_usuarios)
-                if st.button("Confirmar Exclusão de Conta", type="destructive"):
-                    banco_global["contas"] = df_contas[df_contas["usuario"] != user_excluir]
-                    banco_global["transacoes"] = df_transacoes[df_transacoes["usuario"] != user_excluir]
-                    banco_global["emprestimos"] = df_emprestimos[df_emprestimos["usuario"] != user_excluir]
-                    st.success(f"Conta de {user_excluir} apagada!")
+            if lista_clientes:
+                user_excluir = st.selectbox("Selecione a conta para deletar:", lista_clientes, key="sel_u_excluir")
+                # Mudança crucial: removemos parâmetros visuais conflitantes do st.button
+                if st.button("Confirmar Exclusão de Conta"):
+                    banco_global["contas"] = df_contas[df_contas["usuario"] != user_excluir].reset_index(drop=True)
+                    banco_global["transacoes"] = df_transacoes[df_transacoes["usuario"] != user_excluir].reset_index(drop=True)
+                    banco_global["emprestimos"] = df_emprestimos[df_emprestimos["usuario"] != user_excluir].reset_index(drop=True)
+                    st.success(f"Conta de {user_excluir} apagada com sucesso!")
                     st.rerun()
             else:
                 st.info("Nenhum cliente cadastrado.")
@@ -113,9 +127,9 @@ def meu_banco_digital():
             if not df_transacoes.empty:
                 st.dataframe(df_transacoes, use_container_width=True)
                 id_deletar = st.number_input("ID da transação para apagar:", min_value=0, step=1)
-                if st.button("Deletar Registro", type="destructive"):
+                if st.button("Deletar Registro"):
                     if id_deletar in df_transacoes["id"].values:
-                        banco_global["transacoes"] = df_transacoes[df_transacoes["id"] != id_deletar]
+                        banco_global["transacoes"] = df_transacoes[df_transacoes["id"] != id_deletar].reset_index(drop=True)
                         st.success(f"Transação ID {id_deletar} removida!")
                         st.rerun()
             else:
@@ -128,22 +142,24 @@ def meu_banco_digital():
                 usuarios_devedores = df_emprestimos[df_emprestimos["divida_restante"] > 0]["usuario"].unique().tolist()
                 if usuarios_devedores:
                     u_pago = st.selectbox("Cliente pagando:", usuarios_devedores)
-                    emp_id = st.selectbox("Contrato ID:", df_emprestimos[(df_emprestimos["usuario"] == u_pago) & (df_emprestimos["divida_restante"] > 0)]["id"].tolist())
-                    idx_emp = df_emprestimos[df_emprestimos["id"] == emp_id].index[0]
-                    valor_maximo = float(df_emprestimos.loc[idx_emp, "divida_restante"])
-                    v_recebido = st.number_input(f"Valor Pago (Máx R$ {valor_maximo:.2f}):", min_value=0.0, max_value=valor_maximo, step=10.0)
+                    contratos_disponiveis = df_emprestimos[(df_emprestimos["usuario"] == u_pago) & (df_emprestimos["divida_restante"] > 0)]["id"].tolist()
                     
-                    if st.button("Dar Baixa no Pagamento"):
-                        if v_recebido > 0:
-                            df_emprestimos.loc[idx_emp, "divida_restante"] -= v_recebido
-                            banco_global["emprestimos"] = df_emprestimos
-                            st.success("Pagamento registrado!")
-                            st.rerun()
+                    if contratos_disponiveis:
+                        emp_id = st.selectbox("Contrato ID:", contratos_disponiveis)
+                        idx_emp = df_emprestimos[df_emprestimos["id"] == emp_id].index[0]
+                        valor_maximo = float(df_emprestimos.loc[idx_emp, "divida_restante"])
+                        v_recebido = st.number_input(f"Valor Pago (Máx R$ {valor_maximo:.2f}):", min_value=0.0, max_value=valor_maximo, step=10.0)
+                        
+                        if st.button("Dar Baixa no Pagamento"):
+                            if v_recebido > 0:
+                                banco_global["emprestimos"].loc[idx_emp, "divida_restante"] -= v_recebido
+                                st.success("Pagamento registrado!")
+                                st.rerun()
             else:
                 st.info("Nenhum empréstimo pendente.")
         return
 
-    # TELA DO CLIENTE
+    # --- TELA EXCLUSIVA DO CLIENTE ---
     t_user = df_transacoes[df_transacoes["usuario"] == user]
     ganhos_totais = t_user[t_user["tipo"] == "Ganho"]["valor"].sum()
     gastos_totais = t_user[t_user["tipo"] == "Gasto"]["valor"].sum()
@@ -159,7 +175,7 @@ def meu_banco_digital():
     m1, m2, m3 = st.columns(3)
     m1.metric("Saldo Real em Conta", f"R$ {saldo_real:,.2f}")
     m2.metric("Total Dívidas", f"R$ {divida_atual:,.2f}")
-    m3.metric("Limite de Crédito", f"R$ {max(0.0, limite_disponivel):,.2f}")
+    m3.metric("Limite de Crédito Disponível", f"R$ {max(0.0, limite_disponivel):,.2f}")
 
     st.divider()
 
@@ -218,7 +234,7 @@ def meu_banco_digital():
 
     with tab_emprestimo_cliente:
         st.subheader("🏛️ Solicitação de Crédito")
-        st.write(f"Limite disponível: **R$ {max(0.0, limite_disponivel):,.2f}**")
+        st.write(f"Seu limite operacional de crédito disponível: **R$ {max(0.0, limite_disponivel):,.2f}**")
         
         c1, c2 = st.columns(2)
         with c1:
@@ -245,7 +261,7 @@ def meu_banco_digital():
                     "valor_puro": v_solicitado, "total_com_juros": t_pagar, "parcelas": int(p_solicitadas), "divida_restante": t_pagar
                 }])
                 banco_global["emprestimos"] = pd.concat([df_emprestimos, novo_emp], ignore_index=True)
-                st.success("Dinheiro liberado!")
+                st.success("Dinheiro liberado na conta!")
                 st.rerun()
                 
         st.markdown("#### 📄 Seus Empréstimos Ativos")
