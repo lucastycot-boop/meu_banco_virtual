@@ -1,60 +1,59 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-import json
-import os
+from streamlit_gsheets import GSheetsConnection
 
-# 1. Configuração Básica de Layout
+# 1. Configuração do Layout
 st.set_page_config(
     page_title="Apex Banco Digital", 
     page_icon="🔱", 
     layout="wide"
 )
 
-# 2. Sistema de Persistência Nativo (Arquivos JSON Locais)
-def carregar_dados_locais(arquivo, dados_iniciais):
-    if os.path.exists(arquivo):
+# 2. Conexão com o Google Sheets (Banco de Dados na Nuvem)
+# O Streamlit vai ler as credenciais secretas configuradas no painel dele
+try:
+    conn = st.connection("gsheets", type=GSheetsConnection)
+except Exception:
+    conn = None
+
+def carregar_dados_nuvem(aba, lista_inicial):
+    if conn:
         try:
-            with open(arquivo, "r", encoding="utf-8") as f:
-                dados = json.load(f)
-            return pd.DataFrame(dados)
+            # Puxa os dados em tempo real da planilha online
+            df = conn.read(worksheet=aba)
+            # Se a planilha estiver vazia, garante as colunas corretas
+            if df.empty:
+                return pd.DataFrame(columns=lista_inicial)
+            return df
         except Exception:
             pass
-    df = pd.DataFrame(dados_iniciais)
-    salvar_dados_locais(arquivo, df)
-    return df
+    return pd.DataFrame(columns=lista_inicial)
 
-def salvar_dados_locais(arquivo, df):
-    try:
-        dados = df.to_dict(orient="records")
-        with open(arquivo, "w", encoding="utf-8") as f:
-            json.dump(dados, f, ensure_ascii=False, indent=4)
-    except Exception as e:
-        st.error(f"Erro crítico ao salvar dados: {e}")
+def salvar_dados_nuvem(aba, df):
+    if conn:
+        try:
+            # Limpa valores nulos e envia para a nuvem
+            df_salvar = df.dropna(how='all')
+            conn.update(worksheet=aba, data=df_salvar)
+        except Exception as e:
+            st.error(f"Erro ao salvar na nuvem: {e}")
 
-# Definição dos nomes dos arquivos físicos
-ARQUIVO_CONTAS = "banco_contas.json"
-ARQUIVO_TRANSACOES = "banco_transacoes.json"
-ARQUIVO_EMPRESTIMOS = "banco_emprestimos.json"
-
-# 3. Inicialização Sincronizada com o State
+# 3. Sincronização Inicial Inteligente
 if "df_contas" not in st.session_state:
-    st.session_state.df_contas = carregar_dados_locais(ARQUIVO_CONTAS, [
-        {"usuario": "Lucas", "senha": "1702", "role": "desenvolvedor", "limite_emprestimo": 5000.0}
-    ])
+    st.session_state.df_contas = carregar_dados_nuvem("contas", ["usuario", "senha", "role", "limite_emprestimo"])
+    if st.session_state.df_contas.empty:
+        st.session_state.df_contas = pd.DataFrame([{"usuario": "Lucas", "senha": "1702", "role": "desenvolvedor", "limite_emprestimo": 5000.0}])
 
 if "df_transacoes" not in st.session_state:
-    st.session_state.df_transacoes = carregar_dados_locais(ARQUIVO_TRANSACOES, [])
-    if st.session_state.df_transacoes.empty:
-        st.session_state.df_transacoes = pd.DataFrame(columns=["id", "usuario", "data", "mes_ano", "tipo", "area", "valor"])
+    st.session_state.df_transacoes = carregar_dados_nuvem("transacoes", ["id", "usuario", "data", "mes_ano", "tipo", "area", "valor"])
 
 if "df_emprestimos" not in st.session_state:
-    st.session_state.df_emprestimos = carregar_dados_locais(ARQUIVO_EMPRESTIMOS, [])
-    if st.session_state.df_emprestimos.empty:
-        st.session_state.df_emprestimos = pd.DataFrame(columns=["id", "usuario", "data", "valor_puro", "total_com_juros", "parcelas", "divida_restante"])
+    st.session_state.df_emprestimos = carregar_dados_nuvem("emprestimos", ["id", "usuario", "data", "valor_puro", "total_com_juros", "parcelas", "divida_restante"])
 
 
 def meu_banco_digital():
+    # Sincroniza sempre com o estado da sessão ativo
     df_contas = st.session_state.df_contas
     df_transacoes = st.session_state.df_transacoes
     df_emprestimos = st.session_state.df_emprestimos
@@ -102,8 +101,10 @@ def meu_banco_digital():
                         else:
                             nova_c = pd.DataFrame([{"usuario": n_user, "senha": n_pass, "role": "usuario", "limite_emprestimo": float(st.session_state.limite_padrao)}])
                             st.session_state.df_contas = pd.concat([df_contas, nova_c], ignore_index=True)
-                            salvar_dados_locais(ARQUIVO_CONTAS, st.session_state.df_contas)
-                            st.success("Conta criada com sucesso! Mude para a aba 'Entrar' para fazer o login.")
+                            
+                            # SALVA DIRETO NA PLANILHA GOOGLE
+                            salvar_dados_nuvem("contas", st.session_state.df_contas)
+                            st.success("Conta criada com sucesso! Vá para a aba 'Entrar'.")
         return
 
     # --- TELA 2: PAINEL RESTRITO ---
@@ -129,7 +130,7 @@ def meu_banco_digital():
         tab_usuarios, tab_transacoes_adm, tab_emprestimos_adm = st.tabs(["👥 Gerenciar Clientes", "📊 Extrato Geral", "🏦 Créditos Ativos"])
         
         with tab_usuarios:
-            st.markdown("##### Todos os Usuários Registrados")
+            st.markdown("##### Todos os Usuários Registrados (Lidos da Nuvem)")
             st.dataframe(df_contas, use_container_width=True)
             
             with st.container(border=True):
@@ -144,8 +145,8 @@ def meu_banco_digital():
                     if st.button("Aplicar Novo Limite", type="primary", key="btn_mudar_limite_adm"):
                         df_contas.loc[idx_u, "limite_emprestimo"] = novo_limite
                         st.session_state.df_contas = df_contas
-                        salvar_dados_locais(ARQUIVO_CONTAS, df_contas)
-                        st.success("Limite modificado com sucesso!")
+                        salvar_dados_nuvem("contas", df_contas)
+                        st.success("Limite modificado na nuvem!")
                         st.rerun()
                 else:
                     st.info("Nenhum cliente cadastrado.")
@@ -160,10 +161,10 @@ def meu_banco_digital():
                         st.session_state.df_transacoes = df_transacoes[df_transacoes["usuario"] != user_excluir].reset_index(drop=True)
                         st.session_state.df_emprestimos = df_emprestimos[df_emprestimos["usuario"] != user_excluir].reset_index(drop=True)
                         
-                        salvar_dados_locais(ARQUIVO_CONTAS, st.session_state.df_contas)
-                        salvar_dados_locais(ARQUIVO_TRANSACOES, st.session_state.df_transacoes)
-                        salvar_dados_locais(ARQUIVO_EMPRESTIMOS, st.session_state.df_emprestimos)
-                        st.success("Conta removida com sucesso!")
+                        salvar_dados_nuvem("contas", st.session_state.df_contas)
+                        salvar_dados_nuvem("transacoes", st.session_state.df_transacoes)
+                        salvar_dados_nuvem("emprestimos", st.session_state.df_emprestimos)
+                        st.success("Conta removida de forma permanente!")
                         st.rerun()
 
         with tab_transacoes_adm:
@@ -175,12 +176,12 @@ def meu_banco_digital():
     else:
         # --- ROTA: CLIENTE ---
         t_user = df_transacoes[df_transacoes["usuario"] == user] if not df_transacoes.empty else pd.DataFrame()
-        ganhos_totais = t_user[t_user["tipo"] == "Ganho"]["valor"].sum() if not t_user.empty else 0.0
-        gastos_totais = t_user[t_user["tipo"] == "Gasto"]["valor"].sum() if not t_user.empty else 0.0
+        ganhos_totais = pd.to_numeric(t_user[t_user["tipo"] == "Ganho"]["valor"]).sum() if not t_user.empty else 0.0
+        gastos_totais = pd.to_numeric(t_user[t_user["tipo"] == "Gasto"]["valor"]).sum() if not t_user.empty else 0.0
         
         e_user = df_emprestimos[df_emprestimos["usuario"] == user] if not df_emprestimos.empty else pd.DataFrame()
-        total_recebido_emprestimo = e_user["valor_puro"].sum() if not e_user.empty else 0.0
-        divida_atual = e_user["divida_restante"].sum() if not e_user.empty else 0.0
+        total_recebido_emprestimo = pd.to_numeric(e_user["valor_puro"]).sum() if not e_user.empty else 0.0
+        divida_atual = pd.to_numeric(e_user["divida_restante"]).sum() if not e_user.empty else 0.0
         
         saldo_real = (ganhos_totais + total_recebido_emprestimo) - gastos_totais
         limite_disponivel = float(dados_user["limite_emprestimo"]) - total_recebido_emprestimo
@@ -217,8 +218,8 @@ def meu_banco_digital():
                                 "mes_ano": datetime.now().strftime("%m/%Y"), "tipo": "Ganho", "area": area_ganho, "valor": val_ganho
                             }])
                             st.session_state.df_transacoes = pd.concat([df_transacoes, nova_t], ignore_index=True)
-                            salvar_dados_locais(ARQUIVO_TRANSACOES, st.session_state.df_transacoes)
-                            st.success("Ganho registrado!")
+                            salvar_dados_nuvem("transacoes", st.session_state.df_transacoes)
+                            st.success("Ganho registrado na nuvem!")
                             st.rerun()
 
             with c_gasto:
@@ -234,8 +235,8 @@ def meu_banco_digital():
                                 "mes_ano": datetime.now().strftime("%m/%Y"), "tipo": "Gasto", "area": area_gasto, "valor": val_gasto
                             }])
                             st.session_state.df_transacoes = pd.concat([df_transacoes, nova_t], ignore_index=True)
-                            salvar_dados_locais(ARQUIVO_TRANSACOES, st.session_state.df_transacoes)
-                            st.success("Gasto computado!")
+                            salvar_dados_nuvem("transacoes", st.session_state.df_transacoes)
+                            st.success("Gasto computado na nuvem!")
                             st.rerun()
 
         with tab_analytics:
@@ -272,8 +273,6 @@ def meu_banco_digital():
                 
                 if v_sol > 0:
                     st.markdown("##### 📊 Tabela de Simulação de Parcelas")
-                    
-                    # Recria a estrutura de simulação empilhada bonita em formato de tabela
                     dados_simulacao = []
                     for parcelas in range(1, 13):
                         total_juros = float(v_sol * ((1 + 0.05) ** parcelas))
@@ -287,7 +286,6 @@ def meu_banco_digital():
                     df_simulado = pd.DataFrame(dados_simulacao)
                     st.table(df_simulado)
                     
-                    # Seleção direta do plano desejado com base na simulação
                     p_sol = st.number_input("Digite a quantidade de parcelas desejada (1 a 12):", min_value=1, max_value=12, value=1)
                     total_final_escolhido = float(v_sol * ((1 + 0.05) ** p_sol))
                     
@@ -299,9 +297,8 @@ def meu_banco_digital():
                         }])
                         st.session_state.df_emprestimos = pd.concat([df_emprestimos, novo_emp], ignore_index=True)
                         
-                        # CORREÇÃO CRÍTICA AQUI: salvamento com o nome correto da função
-                        salvar_dados_locais(ARQUIVO_EMPRESTIMOS, st.session_state.df_emprestimos)
-                        st.success("Crédito liberado em conta!")
+                        salvar_dados_nuvem("emprestimos", st.session_state.df_emprestimos)
+                        st.success("Crédito liberado e salvo permanentemente!")
                         st.rerun()
             
             st.divider()
