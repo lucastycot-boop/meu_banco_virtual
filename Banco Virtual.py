@@ -5,7 +5,7 @@ from datetime import datetime
 st.set_page_config(page_title="Banco Digital", page_icon="💳", layout="wide")
 
 # -------------------------
-# Dados em memória
+# Estado em memória
 # -------------------------
 if "usuarios" not in st.session_state:
     st.session_state.usuarios = {"admin": {"senha": "1702", "role": "admin", "limite": 5000}}
