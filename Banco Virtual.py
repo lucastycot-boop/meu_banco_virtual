@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
-import os
 
 # 1. Configuração de Layout
 st.set_page_config(
@@ -12,11 +11,10 @@ st.set_page_config(
 
 DB_NAME = "banco_dados.db"
 
-# 2. Funções do Banco de Dados Real (SQLite)
+# 2. Funções do Banco de Dados Interno (SQLite)
 def conectar_banco():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    # Cria a tabela real se ela não existir no servidor
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS contas (
             usuario TEXT PRIMARY KEY,
@@ -74,7 +72,7 @@ def atualizar_movimentacao(usuario, tipo, valor):
     conn.commit()
     conn.close()
 
-# Inicializa a estrutura física do banco
+# Garante a criação da estrutura inicial no servidor
 inicializar_admin()
 
 def meu_banco_digital():
@@ -98,7 +96,7 @@ def meu_banco_digital():
                 with aba_login:
                     u_input = st.text_input("Usuário", key="login_u").strip()
                     s_input = st.text_input("Senha", type="password", key="login_s").strip()
-                    if st.button("Acessar Banco", use_container_width=True, type="primary"):
+                    if st.button("Acessar Banco", use_container_width=True, type="primary", key="btn_logar"):
                         user_rows = df_banco[df_banco["usuario"] == u_input]
                         if not user_rows.empty and str(user_rows.iloc[0]["senha"]) == s_input:
                             st.session_state.logado = True
@@ -111,7 +109,7 @@ def meu_banco_digital():
                     n_user = st.text_input("Nome de Usuário", key="cad_u").strip()
                     n_pass = st.text_input("Senha de Acesso", type="password", key="cad_s").strip()
                     c_pass = st.text_input("Confirme a Senha", type="password", key="cad_cp").strip()
-                    if st.button("Cadastrar no Sistema", use_container_width=True):
+                    if st.button("Cadastrar no Sistema", use_container_width=True, key="btn_cadastrar"):
                         if not n_user or not n_pass:
                             st.warning("Preencha todos os campos!")
                         elif n_pass != c_pass:
@@ -119,6 +117,7 @@ def meu_banco_digital():
                         else:
                             if cadastrar_usuario(n_user, n_pass):
                                 st.success("Conta criada! Vá para a aba 'Entrar'.")
+                                st.rerun()
                             else:
                                 st.error("Este usuário já existe!")
         return
@@ -131,18 +130,18 @@ def meu_banco_digital():
         st.markdown(f"👤 Usuário: **{user}**")
         st.markdown(f"🏷️ Perfil: `{user_data['role']}`")
         st.divider()
-        if st.button("🚪 Desconectar", type="destructive", use_container_width=True):
+        if st.button("🚪 Desconectar", type="destructive", use_container_width=True, key="btn_logout_lateral"):
             st.session_state.logado = False
             st.session_state.usuario_atual = None
             st.rerun()
 
-    # ROTA DO ADMINISTRADOR
+    # PERFIL DO DESENVOLVEDOR (LUCAS)
     if user_data["role"] == "desenvolvedor":
         st.header("🛠️ Painel de Controle Admin")
-        st.markdown("##### Todos os Clientes Cadastrados no Banco de Dados:")
+        st.markdown("##### Clientes Cadastrados no Banco de Dados:")
         st.dataframe(df_banco, use_container_width=True)
 
-    # ROTA DO CLIENTE
+    # PERFIL DO CLIENTE
     else:
         st.header(f"👋 Bem-vindo, {user}!")
         saldo = float(user_data["ganhos"]) - float(user_data["gastos"])
@@ -163,7 +162,7 @@ def meu_banco_digital():
             with st.container(border=True):
                 st.markdown("##### Receber PIX")
                 v_ganho = st.number_input("Valor (R$)", min_value=0.0, step=50.0, key="v_g")
-                if st.button("Confirmar Entrada"):
+                if st.button("Confirmar Entrada", key="btn_v_g"):
                     if v_ganho > 0:
                         atualizar_movimentacao(user, "ganho", v_ganho)
                         st.success("Valor recebido!")
@@ -173,7 +172,7 @@ def meu_banco_digital():
             with st.container(border=True):
                 st.markdown("##### Pagar / Gastar")
                 v_gasto = st.number_input("Valor (R$)", min_value=0.0, step=50.0, key="v_p")
-                if st.button("Confirmar Pagamento"):
+                if st.button("Confirmar Pagamento", key="btn_v_p"):
                     if v_gasto > 0:
                         atualizar_movimentacao(user, "gasto", v_gasto)
                         st.success("Pagamento realizado!")
