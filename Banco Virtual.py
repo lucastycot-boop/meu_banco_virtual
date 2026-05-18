@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import json
 from datetime import datetime
 from streamlit_autorefresh import st_autorefresh
 
@@ -11,37 +10,36 @@ st.set_page_config(page_title="Apex Banco Digital", page_icon="🔱", layout="wi
 st_autorefresh(interval=3000, key="datarefresh")
 
 # --- CONEXÃO COM O STORAGE PERMANENTE DO STREAMLIT ---
-# Inicializa a conexão interna de armazenamento seguro
 try:
     conn = st.connection("storage", type="stlite")
 except Exception:
-    # Fallback caso o componente local precise de suporte
     conn = None
 
-def carregar_dados_permanentes(chave, dados_iniciais):
-    """Carrega os dados guardados na nuvem estável do Streamlit"""
+def carregar_dados_permanentes(chave, lista_inicial):
+    """Carrega os dados guardados na nuvem do Streamlit de forma segura"""
     if conn and chave in conn:
         try:
             texto_salvo = conn[chave]
             return pd.read_json(texto_salvo, orient="records")
         except:
             pass
-    return pd.DataFrame(dados_iniciais)
+    return pd.DataFrame(lista_inicial)
 
 def salvar_dados_permanentes(chave, df):
-    """Grava as alterações na nuvem estável para resistir ao Reboot"""
+    """Grava as alterações na nuvem para resistir ao Reboot"""
     if conn:
         texto_json = df.to_json(orient="records")
         conn[chave] = texto_json
 
-# --- CARREGAMENTO DO BANCO DE DADOS (RESISTENTE A REBOOT) ---
+# --- CARREGAMENTO CORRIGIDO DOS BANCOS (RESISTENTE A REBOOT) ---
 df_contas = carregar_dados_permanentes("banco_contas", [{"usuario": "Lucas", "senha": "1702", "role": "desenvolvedor", "limite_emprestimo": 5000.0}])
-df_transacoes = carregar_dados_permanentes("banco_transacoes", columns=["id", "usuario", "data", "mes_ano", "tipo", "area", "valor"])
-df_emprestimos = carregar_dados_permanentes("banco_emprestimos", columns=["id", "usuario", "data", "valor_puro", "total_com_juros", "parcelas", "divida_restante"])
 
-# Garante que as colunas essenciais existam caso venham vazias
+# Correção do erro da Linha 39: Passando estruturas em listas puras em vez de parâmetros de colunas inválidos
+df_transacoes = carregar_dados_permanentes("banco_transacoes", [])
 if df_transacoes.empty:
     df_transacoes = pd.DataFrame(columns=["id", "usuario", "data", "mes_ano", "tipo", "area", "valor"])
+
+df_emprestimos = carregar_dados_permanentes("banco_emprestimos", [])
 if df_emprestimos.empty:
     df_emprestimos = pd.DataFrame(columns=["id", "usuario", "data", "valor_puro", "total_com_juros", "parcelas", "divida_restante"])
 
