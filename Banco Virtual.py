@@ -152,6 +152,17 @@ def adicionar_meses(data_base, meses):
     dia = min(data_base.day, [31, 29 if ano % 4 == 0 and (ano % 100 != 0 or ano % 400 == 0) else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][mes - 1])
     return datetime(ano, mes, dia)
 
+def formatar_data_br(data_iso):
+    """Formata data ISO para o padrão brasileiro: DD/MM/YY"""
+    try:
+        if isinstance(data_iso, str):
+            dt = datetime.fromisoformat(data_iso)
+        else:
+            dt = data_iso
+        return dt.strftime("%d/%m/%y")
+    except:
+        return data_iso
+
 def meu_banco_digital():
     init_database()
     st.set_page_config(page_title="Apex Banco Digital", page_icon="🔱", layout="wide")
@@ -249,10 +260,45 @@ def meu_banco_digital():
                     st.info("Nenhuma conta disponível para exclusão.")
 
             with tab_transacoes_adm:
-                st.dataframe(df_transacoes, use_container_width=True)
+                st.markdown("##### 📋 Extrato Geral do Sistema")
+                if not df_transacoes.empty:
+                    # Formatar datas
+                    df_transacoes_display = df_transacoes.copy()
+                    df_transacoes_display["data_hora"] = df_transacoes_display["data_hora"].apply(formatar_data_br)
+                    # Reorganizar colunas para melhor visualização
+                    df_display = df_transacoes_display[["data_hora", "usuario", "tipo", "descricao", "valor"]].rename(
+                        columns={
+                            "data_hora": "Data",
+                            "usuario": "Usuário",
+                            "tipo": "Tipo",
+                            "descricao": "Descrição",
+                            "valor": "Valor (R$)"
+                        }
+                    ).sort_values("Data", ascending=False)
+                    st.dataframe(df_display, use_container_width=True)
+                else:
+                    st.info("Nenhuma transação registrada no sistema.")
 
             with tab_emprestimos_adm:
-                st.dataframe(df_loans, use_container_width=True)
+                st.markdown("##### 💳 Créditos Ativos do Sistema")
+                if not df_loans.empty:
+                    # Formatar datas
+                    df_loans_display = df_loans.copy()
+                    df_loans_display["data_hora"] = df_loans_display["data_hora"].apply(formatar_data_br)
+                    # Reorganizar colunas
+                    df_display = df_loans_display[["data_hora", "usuario", "valor_puro", "total_com_juros", "parcelas", "divida_restante"]].rename(
+                        columns={
+                            "data_hora": "Data Contratação",
+                            "usuario": "Usuário",
+                            "valor_puro": "Valor Recebido (R$)",
+                            "total_com_juros": "Total com Juros (R$)",
+                            "parcelas": "Prazo (Meses)",
+                            "divida_restante": "Dívida Atual (R$)"
+                        }
+                    ).sort_values("Data Contratação", ascending=False)
+                    st.dataframe(df_display, use_container_width=True)
+                else:
+                    st.info("Nenhum empréstimo ativo no sistema.")
         else:
             ganhos_totais = pd.to_numeric(df_transacoes_user[df_transacoes_user["tipo"] == "Ganho"]["valor"]).sum() if not df_transacoes_user.empty else 0.0
             gastos_totais = pd.to_numeric(df_transacoes_user[df_transacoes_user["tipo"] == "Gasto"]["valor"]).sum() if not df_transacoes_user.empty else 0.0
@@ -316,8 +362,19 @@ def meu_banco_digital():
                         else:
                             st.info("Sem gastos registrados.")
                     st.divider()
-                    st.markdown("##### Extrato Completo")
-                    st.dataframe(df_transacoes_user[["data_hora", "tipo", "descricao", "valor"]].rename(columns={"data_hora": "Data", "descricao": "Categoria", "valor": "Valor (R$)"}), use_container_width=True)
+                    st.markdown("##### 📋 Extrato Detalhado (Todas as Transações)")
+                    # Formatar datas no extrato do usuário
+                    df_extrato = df_transacoes_user.copy()
+                    df_extrato["data_hora"] = df_extrato["data_hora"].apply(formatar_data_br)
+                    df_extrato_display = df_extrato[["data_hora", "tipo", "descricao", "valor"]].rename(
+                        columns={
+                            "data_hora": "Data",
+                            "tipo": "Tipo",
+                            "descricao": "Categoria",
+                            "valor": "Valor (R$)"
+                        }
+                    ).sort_values("Data", ascending=False)
+                    st.dataframe(df_extrato_display, use_container_width=True)
                 else:
                     st.info("Nenhuma movimentação para exibir.")
 
@@ -353,7 +410,18 @@ def meu_banco_digital():
                 st.divider()
                 st.markdown("#### 📊 Seus Contratos de Empréstimos Ativos")
                 if not df_loans_user.empty:
-                    st.dataframe(df_loans_user[["data_hora", "valor_puro", "total_com_juros", "parcelas", "divida_restante"]].rename(columns={"data_hora": "Data", "valor_puro": "Valor Recebido (R$)", "total_com_juros": "Total com Juros (R$)", "parcelas": "Prazo (Meses)", "divida_restante": "Dívida Atual (R$)"}), use_container_width=True)
+                    df_emprestimos = df_loans_user.copy()
+                    df_emprestimos["data_hora"] = df_emprestimos["data_hora"].apply(formatar_data_br)
+                    df_emprestimos_display = df_emprestimos[["data_hora", "valor_puro", "total_com_juros", "parcelas", "divida_restante"]].rename(
+                        columns={
+                            "data_hora": "Data Contratação",
+                            "valor_puro": "Valor Recebido (R$)",
+                            "total_com_juros": "Total com Juros (R$)",
+                            "parcelas": "Prazo (Meses)",
+                            "divida_restante": "Dívida Atual (R$)"
+                        }
+                    ).sort_values("Data Contratação", ascending=False)
+                    st.dataframe(df_emprestimos_display, use_container_width=True)
                 else:
                     st.info("Você não possui contratos de empréstimo ativos no momento.")
 
