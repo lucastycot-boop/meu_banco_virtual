@@ -124,7 +124,7 @@ def clear_remember_token(usuario):
     update_user_in_db(usuario, remember_token=None)
 
 def try_auto_login():
-    params = st.experimental_get_query_params()
+    params = st.query_params
     user = params.get("user", [None])[0]
     token = params.get("token", [None])[0]
     if user and token and not st.session_state.logado:
@@ -337,10 +337,10 @@ def meu_banco_digital():
                         st.session_state.usuario_atual = u_input
                         if remember_me:
                             token = set_remember_token(u_input)
-                            st.experimental_set_query_params(user=u_input, token=token)
+                            st.query_params = {"user": [u_input], "token": [token]}
                         else:
                             clear_remember_token(u_input)
-                            st.experimental_set_query_params()
+                            st.query_params = {}
                         st.success("Login realizado com sucesso!")
                         st.rerun()
                     else:
@@ -377,7 +377,7 @@ def meu_banco_digital():
         if st.sidebar.button("Sair do Sistema"):
             st.session_state.logado = False
             st.session_state.usuario_atual = None
-            st.experimental_set_query_params()
+            st.query_params = {}
             st.rerun()
 
         if dados_user["role"] == "desenvolvedor":
