@@ -431,6 +431,7 @@ def meu_banco_digital():
                 u_input = st.text_input("Usuário", key="l_user").strip()
                 s_input = st.text_input("Senha", type="password", key="l_pass").strip()
                 remember_me = st.checkbox("Lembrar-me neste dispositivo", value=True, key="remember_me")
+
                 if st.button("Acessar Banco", use_container_width=True, type="primary", key="btn_executar_login"):
                     if authenticate_user(u_input, s_input):
                         st.session_state.logado = True
@@ -445,6 +446,21 @@ def meu_banco_digital():
                         st.rerun()
                     else:
                         st.error("Usuário ou senha incorretos!")
+
+                st.markdown("---")
+                st.markdown("#### Login Automático")
+                st.info("Use o botão abaixo para entrar automaticamente com a conta demo do desenvolvedor.")
+                if st.button("Entrar automaticamente como Lucas", use_container_width=True, key="btn_auto_login"):
+                    auto_user = "Lucas"
+                    if fetch_user(auto_user):
+                        st.session_state.logado = True
+                        st.session_state.usuario_atual = auto_user
+                        token = set_remember_token(auto_user)
+                        send_token_to_client(token)
+                        st.success("Login automático realizado com sucesso!")
+                        st.rerun()
+                    else:
+                        st.error("Conta automática não encontrada. Crie a conta primeiro.")
 
             with aba_cadastro:
                 n_user = st.text_input("Nome de Usuário", key="c_user").strip()
