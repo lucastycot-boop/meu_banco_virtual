@@ -178,6 +178,53 @@ def delete_transaction(transacao_id):
     with get_db_connection() as conn:
         conn.execute("DELETE FROM transacoes WHERE id = ?", (transacao_id,))
 
+def reverse_developer_interest(valor_juros):
+    if valor_juros <= 0:
+        return
+    with get_db_connection() as conn:
+        dev = conn.execute("SELECT * FROM contas WHERE role = 'desenvolvedor' LIMIT 1").fetchone()
+        if not dev:
+            return
+        novo_ganhos = max(0.0, dev["ganhos"] - valor_juros)
+        conn.execute("UPDATE contas SET ganhos = ? WHERE usuario = ?", (novo_ganhos, dev["usuario"]))
+        dev_tx = conn.execute(
+            "SELECT id FROM transacoes WHERE usuario = ? AND tipo = 'Ganho' AND valor = ? AND descricao = 'Juros de Empréstimo' ORDER BY data_hora DESC LIMIT 1",
+            (dev["usuario"], valor_juros),
+        ).fetchone()
+        if dev_tx:
+            conn.execute("DELETE FROM transacoes WHERE id = ?", (dev_tx["id"],))
+
+def cancel_loan(loan_id):
+    with get_db_connection() as conn:
+        loan = conn.execute("SELECT * FROM emprestimos WHERE id = ?", (loan_id,)).fetchone()
+        if not loan:
+            return False
+
+        usuario = loan["usuario"]
+        valor_puro = loan["valor_puro"]
+        total_com_juros = loan["total_com_juros"]
+
+        cliente = conn.execute("SELECT * FROM contas WHERE usuario = ?", (usuario,)).fetchone()
+        if cliente:
+            novo_ganhos = cliente["ganhos"] - valor_puro
+            novo_divida = max(0.0, cliente["divida_emprestimo"] - total_com_juros)
+            novo_limite = cliente["limite_emprestimo"] + valor_puro
+            conn.execute(
+                "UPDATE contas SET ganhos = ?, divida_emprestimo = ?, limite_emprestimo = ? WHERE usuario = ?",
+                (novo_ganhos, novo_divida, novo_limite, usuario),
+            )
+            loan_tx = conn.execute(
+                "SELECT id FROM transacoes WHERE usuario = ? AND tipo = 'Empréstimo' AND valor = ? ORDER BY data_hora DESC LIMIT 1",
+                (usuario, valor_puro),
+            ).fetchone()
+            if loan_tx:
+                conn.execute("DELETE FROM transacoes WHERE id = ?", (loan_tx["id"],))
+
+        juros_aplicados = total_com_juros - valor_puro
+        reverse_developer_interest(juros_aplicados)
+        conn.execute("DELETE FROM emprestimos WHERE id = ?", (loan_id,))
+    return True
+
 def pay_loan(loan_id):
     with get_db_connection() as conn:
         loan = conn.execute("SELECT * FROM emprestimos WHERE id = ?", (loan_id,)).fetchone()
@@ -327,6 +374,21 @@ def meu_banco_digital():
                 else:
                     st.info("Nenhum cliente cadastrado.")
 
+                st.markdown("#### 🔧 Ajustar Saldo do Desenvolvedor")
+                dev_users = df_users[df_users["role"] == "desenvolvedor"]
+                if not dev_users.empty:
+                    dev_usuario = dev_users.iloc[0]["usuario"]
+                    dev_ganhos = float(dev_users.iloc[0]["ganhos"])
+                    dev_gastos = float(dev_users.iloc[0]["gastos"])
+                    novo_dev_ganhos = st.number_input("Ganhos do Desenvolvedor", min_value=0.0, step=10.0, value=dev_ganhos, key="dev_ganhos")
+                    novo_dev_gastos = st.number_input("Gastos do Desenvolvedor", min_value=0.0, step=10.0, value=dev_gastos, key="dev_gastos")
+                    if st.button("Aplicar Ajuste de Saldo", key="btn_ajustar_saldo_dev"):
+                        update_user_in_db(dev_usuario, ganhos=novo_dev_ganhos, gastos=novo_dev_gastos)
+                        st.success("Saldo do desenvolvedor ajustado com sucesso!")
+                        st.rerun()
+                else:
+                    st.warning("Nenhum desenvolvedor cadastrado para ajuste.")
+
                 st.markdown("#### ❌ Excluir Conta de Cliente")
                 if lista_clientes:
                     user_excluir = st.selectbox("Selecione a conta para deletar:", lista_clientes, key="sel_u_excluir")
@@ -394,6 +456,13 @@ def meu_banco_digital():
                             st.success("Empréstimo marcado como pago. O valor foi debitado do cliente.")
                         else:
                             st.error("Não foi possível processar o pagamento do empréstimo.")
+                        st.rerun()
+
+                    if st.button("Cancelar Empréstimo (tornar inexistente)", key="btn_cancelar_loan_adm"):
+                        if cancel_loan(selecionado_loan):
+                            st.success("Empréstimo cancelado como inexistente. Ajustei saldo do cliente e do desenvolvedor.")
+                        else:
+                            st.error("Não foi possível cancelar o empréstimo.")
                         st.rerun()
                 else:
                     st.info("Nenhum empréstimo ativo no sistema.")
