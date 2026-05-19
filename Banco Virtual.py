@@ -430,26 +430,21 @@ def meu_banco_digital():
             with aba_login:
                 u_input = st.text_input("Usuário", key="l_user").strip()
                 s_input = st.text_input("Senha", type="password", key="l_pass").strip()
-                remember_me = st.checkbox("Lembrar-me neste dispositivo", value=True, key="remember_me")
 
                 if st.button("Acessar Banco", use_container_width=True, type="primary", key="btn_executar_login"):
                     if authenticate_user(u_input, s_input):
                         st.session_state.logado = True
                         st.session_state.usuario_atual = u_input
-                        if remember_me:
-                            token = set_remember_token(u_input)
-                            send_token_to_client(token)
-                        else:
-                            clear_remember_token(u_input)
-                            send_clear_remember_to_client()
-                        st.success("Login realizado com sucesso!")
+                        token = set_remember_token(u_input)
+                        send_token_to_client(token)
+                        st.success("Login realizado com sucesso! Este dispositivo será lembrado automaticamente.")
                         st.rerun()
                     else:
                         st.error("Usuário ou senha incorretos!")
 
                 st.markdown("---")
                 st.markdown("#### Login Automático")
-                st.info("Use o botão abaixo para entrar automaticamente com a conta demo do desenvolvedor.")
+                st.info("Cada usuário que fizer login será lembrado automaticamente neste dispositivo.")
                 if st.button("Entrar automaticamente como Lucas", use_container_width=True, key="btn_auto_login"):
                     auto_user = "Lucas"
                     if fetch_user(auto_user):
