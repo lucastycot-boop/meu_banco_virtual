@@ -60,6 +60,22 @@ def init_database():
         )
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS emprestimos_pagos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                usuario TEXT NOT NULL,
+                data_hora TEXT NOT NULL,
+                valor_puro REAL NOT NULL,
+                total_com_juros REAL NOT NULL,
+                parcelas INTEGER NOT NULL,
+                divida_restante REAL NOT NULL,
+                data_pagamento TEXT NOT NULL,
+                valor_pago REAL NOT NULL,
+                FOREIGN KEY(usuario) REFERENCES contas(usuario)
+            )
+            """
+        )
+        conn.execute(
+            """
             INSERT OR IGNORE INTO contas (usuario, senha, role, ganhos, gastos, limite_emprestimo, divida_emprestimo)
             VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
@@ -139,19 +155,57 @@ def fetch_loans_df(usuario=None):
         return pd.DataFrame(columns=["id", "usuario", "data_hora", "valor_puro", "total_com_juros", "parcelas", "divida_restante"])
     return pd.DataFrame([dict(row) for row in rows])
 
+def fetch_paid_loans_df(usuario=None):
+    sql = "SELECT * FROM emprestimos_pagos"
+    params = ()
+    if usuario:
+        sql += " WHERE usuario = ?"
+        params = (usuario,)
+    with get_db_connection() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    if not rows:
+        return pd.DataFrame(columns=["id", "usuario", "data_hora", "valor_puro", "total_com_juros", "parcelas", "divida_restante", "data_pagamento", "valor_pago"])
+    return pd.DataFrame([dict(row) for row in rows])
+
 def delete_user(usuario):
     with get_db_connection() as conn:
         conn.execute("DELETE FROM transacoes WHERE usuario = ?", (usuario,))
         conn.execute("DELETE FROM emprestimos WHERE usuario = ?", (usuario,))
+        conn.execute("DELETE FROM emprestimos_pagos WHERE usuario = ?", (usuario,))
         conn.execute("DELETE FROM contas WHERE usuario = ?", (usuario,))
 
 def delete_transaction(transacao_id):
     with get_db_connection() as conn:
         conn.execute("DELETE FROM transacoes WHERE id = ?", (transacao_id,))
 
-def delete_loan(loan_id):
+def pay_loan(loan_id):
     with get_db_connection() as conn:
+        loan = conn.execute("SELECT * FROM emprestimos WHERE id = ?", (loan_id,)).fetchone()
+        if not loan:
+            return False
+        usuario = loan["usuario"]
+        valor_puro = loan["valor_puro"]
+        total_com_juros = loan["total_com_juros"]
+
+        cliente = conn.execute("SELECT * FROM contas WHERE usuario = ?", (usuario,)).fetchone()
+        if cliente:
+            novo_gastos = cliente["gastos"] + total_com_juros
+            nova_divida = max(0.0, cliente["divida_emprestimo"] - total_com_juros)
+            novo_limite = cliente["limite_emprestimo"] + valor_puro
+            conn.execute(
+                "UPDATE contas SET gastos = ?, divida_emprestimo = ?, limite_emprestimo = ? WHERE usuario = ?",
+                (novo_gastos, nova_divida, novo_limite, usuario),
+            )
+        conn.execute(
+            "INSERT INTO emprestimos_pagos (usuario, data_hora, valor_puro, total_com_juros, parcelas, divida_restante, data_pagamento, valor_pago) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (usuario, loan["data_hora"], valor_puro, total_com_juros, loan["parcelas"], loan["divida_restante"], datetime.now().isoformat(), total_com_juros),
+        )
+        conn.execute(
+            "INSERT INTO transacoes (usuario, tipo, valor, descricao, data_hora) VALUES (?, ?, ?, ?, ?)",
+            (usuario, "Gasto", total_com_juros, f"Pagamento Empréstimo {loan_id}", datetime.now().isoformat()),
+        )
         conn.execute("DELETE FROM emprestimos WHERE id = ?", (loan_id,))
+    return True
 
 def credit_developer_interest(valor_juros):
     if valor_juros <= 0:
@@ -236,6 +290,7 @@ def meu_banco_digital():
         df_users = fetch_users_df()
         df_transacoes = fetch_transactions_df()
         df_loans = fetch_loans_df()
+        df_paid_loans = fetch_paid_loans_df()
         df_transacoes_user = fetch_transactions_df(user)
         df_loans_user = fetch_loans_df(user)
 
@@ -331,15 +386,38 @@ def meu_banco_digital():
                     ).sort_values("Data Contratação", ascending=False)
                     st.dataframe(df_display, use_container_width=True)
 
-                    st.markdown("##### 🗑️ Excluir Empréstimo")
+                    st.markdown("##### ✅ Marcar Empréstimo como Pago")
                     emprestimos_ids = df_loans_display["id"].tolist()
                     selecionado_loan = st.selectbox("Selecione o ID do empréstimo:", emprestimos_ids, key="sel_loan_adm")
-                    if st.button("Excluir Empréstimo", key="btn_excluir_loan_adm"):
-                        delete_loan(selecionado_loan)
-                        st.success("Empréstimo excluído com sucesso.")
+                    if st.button("Marcar como Pago", key="btn_pagar_loan_adm"):
+                        if pay_loan(selecionado_loan):
+                            st.success("Empréstimo marcado como pago. O valor foi debitado do cliente.")
+                        else:
+                            st.error("Não foi possível processar o pagamento do empréstimo.")
                         st.rerun()
                 else:
                     st.info("Nenhum empréstimo ativo no sistema.")
+
+                st.divider()
+                st.markdown("##### 📁 Histórico de Empréstimos Pagos")
+                if not df_paid_loans.empty:
+                    df_paid_display = df_paid_loans.copy()
+                    df_paid_display["data_hora"] = df_paid_display["data_hora"].apply(formatar_data_br)
+                    df_paid_display["data_pagamento"] = df_paid_display["data_pagamento"].apply(formatar_data_br)
+                    df_paid_table = df_paid_display[["data_hora", "data_pagamento", "usuario", "valor_puro", "total_com_juros", "parcelas", "valor_pago"]].rename(
+                        columns={
+                            "data_hora": "Data Contratação",
+                            "data_pagamento": "Data Pagamento",
+                            "usuario": "Usuário",
+                            "valor_puro": "Valor Recebido (R$)",
+                            "total_com_juros": "Total com Juros (R$)",
+                            "parcelas": "Prazo (Meses)",
+                            "valor_pago": "Valor Pago (R$)"
+                        }
+                    ).sort_values("Data Pagamento", ascending=False)
+                    st.dataframe(df_paid_table, use_container_width=True)
+                else:
+                    st.info("Nenhum empréstimo pago registrado.")
         else:
             ganhos_totais = pd.to_numeric(df_transacoes_user[df_transacoes_user["tipo"] == "Ganho"]["valor"]).sum() if not df_transacoes_user.empty else 0.0
             gastos_totais = pd.to_numeric(df_transacoes_user[df_transacoes_user["tipo"] == "Gasto"]["valor"]).sum() if not df_transacoes_user.empty else 0.0
