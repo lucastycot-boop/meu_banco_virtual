@@ -145,6 +145,14 @@ def delete_user(usuario):
         conn.execute("DELETE FROM emprestimos WHERE usuario = ?", (usuario,))
         conn.execute("DELETE FROM contas WHERE usuario = ?", (usuario,))
 
+def delete_transaction(transacao_id):
+    with get_db_connection() as conn:
+        conn.execute("DELETE FROM transacoes WHERE id = ?", (transacao_id,))
+
+def delete_loan(loan_id):
+    with get_db_connection() as conn:
+        conn.execute("DELETE FROM emprestimos WHERE id = ?", (loan_id,))
+
 # Função auxiliar para avançar os meses nas datas de vencimento
 def adicionar_meses(data_base, meses):
     ano = data_base.year + (data_base.month + meses - 1) // 12
@@ -235,6 +243,25 @@ def meu_banco_digital():
                 st.markdown("##### Todos os Usuários Registrados")
                 st.dataframe(df_users, use_container_width=True)
 
+                st.markdown("#### ➕ Adicionar Novo Cliente")
+                with st.form(key="form_adicionar_cliente"):
+                    novo_usuario = st.text_input("Nome de Usuário", key="adm_novo_user").strip()
+                    nova_senha = st.text_input("Senha", type="password", key="adm_nova_senha").strip()
+                    confirm_senha = st.text_input("Confirmar Senha", type="password", key="adm_confirma_senha").strip()
+                    novo_limite_usuario = st.number_input("Limite de Empréstimo Inicial", min_value=0.0, step=100.0, value=st.session_state.limite_padrao, key="adm_limite_inicial")
+                    submit_novo = st.form_submit_button("Criar Conta de Cliente")
+                    if submit_novo:
+                        if not novo_usuario or not nova_senha:
+                            st.warning("Preencha usuário e senha.")
+                        elif fetch_user(novo_usuario):
+                            st.error("Este usuário já existe.")
+                        elif nova_senha != confirm_senha:
+                            st.error("As senhas não conferem.")
+                        else:
+                            create_user_in_db(novo_usuario, nova_senha, "usuario", novo_limite_usuario)
+                            st.success("Conta de cliente criada com sucesso!")
+                            st.rerun()
+
                 st.markdown("#### ⚙️ Alterar Limite de Crédito")
                 lista_clientes = df_users[df_users["role"] != "desenvolvedor"]["usuario"].tolist()
                 if lista_clientes:
@@ -266,8 +293,9 @@ def meu_banco_digital():
                     df_transacoes_display = df_transacoes.copy()
                     df_transacoes_display["data_hora"] = df_transacoes_display["data_hora"].apply(formatar_data_br)
                     # Reorganizar colunas para melhor visualização
-                    df_display = df_transacoes_display[["data_hora", "usuario", "tipo", "descricao", "valor"]].rename(
+                    df_display = df_transacoes_display[["id", "data_hora", "usuario", "tipo", "descricao", "valor"]].rename(
                         columns={
+                            "id": "ID",
                             "data_hora": "Data",
                             "usuario": "Usuário",
                             "tipo": "Tipo",
@@ -276,6 +304,14 @@ def meu_banco_digital():
                         }
                     ).sort_values("Data", ascending=False)
                     st.dataframe(df_display, use_container_width=True)
+
+                    st.markdown("##### 🗑️ Excluir Transação")
+                    transacoes_ids = df_transacoes_display["id"].tolist()
+                    selecionado_tx = st.selectbox("Selecione o ID da transação:", transacoes_ids, key="sel_tx_adm")
+                    if st.button("Excluir Transação", key="btn_excluir_tx_adm"):
+                        delete_transaction(selecionado_tx)
+                        st.success("Transação excluída com sucesso.")
+                        st.rerun()
                 else:
                     st.info("Nenhuma transação registrada no sistema.")
 
@@ -286,8 +322,9 @@ def meu_banco_digital():
                     df_loans_display = df_loans.copy()
                     df_loans_display["data_hora"] = df_loans_display["data_hora"].apply(formatar_data_br)
                     # Reorganizar colunas
-                    df_display = df_loans_display[["data_hora", "usuario", "valor_puro", "total_com_juros", "parcelas", "divida_restante"]].rename(
+                    df_display = df_loans_display[["id", "data_hora", "usuario", "valor_puro", "total_com_juros", "parcelas", "divida_restante"]].rename(
                         columns={
+                            "id": "ID",
                             "data_hora": "Data Contratação",
                             "usuario": "Usuário",
                             "valor_puro": "Valor Recebido (R$)",
@@ -297,6 +334,14 @@ def meu_banco_digital():
                         }
                     ).sort_values("Data Contratação", ascending=False)
                     st.dataframe(df_display, use_container_width=True)
+
+                    st.markdown("##### 🗑️ Excluir Empréstimo")
+                    emprestimos_ids = df_loans_display["id"].tolist()
+                    selecionado_loan = st.selectbox("Selecione o ID do empréstimo:", emprestimos_ids, key="sel_loan_adm")
+                    if st.button("Excluir Empréstimo", key="btn_excluir_loan_adm"):
+                        delete_loan(selecionado_loan)
+                        st.success("Empréstimo excluído com sucesso.")
+                        st.rerun()
                 else:
                     st.info("Nenhum empréstimo ativo no sistema.")
         else:
