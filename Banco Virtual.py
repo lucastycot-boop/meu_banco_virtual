@@ -123,15 +123,49 @@ def set_remember_token(usuario, token=None):
 def clear_remember_token(usuario):
     update_user_in_db(usuario, remember_token=None)
 
+def fetch_user_by_token(token):
+    with get_db_connection() as conn:
+        row = conn.execute("SELECT * FROM contas WHERE remember_token = ?", (token,)).fetchone()
+    return dict(row) if row else None
+
+
 def try_auto_login():
     params = st.query_params
-    user = params.get("user", [None])[0]
-    token = params.get("token", [None])[0]
-    if user and token and not st.session_state.logado:
-        dados = fetch_user(user)
-        if dados and dados.get("remember_token") == token:
+    token = params.get("remember_token", [None])[0]
+    if token and not st.session_state.logado:
+        dados = fetch_user_by_token(token)
+        if dados:
             st.session_state.logado = True
-            st.session_state.usuario_atual = user
+            st.session_state.usuario_atual = dados["usuario"]
+
+
+def remember_me_client_script():
+    js = """
+    <script>
+        const params = new URLSearchParams(window.location.search);
+        const rememberKey = 'apex_remember_token';
+        const token = params.get('remember_token');
+        const clear = params.get('clear_remember');
+
+        if (clear === '1') {
+            localStorage.removeItem(rememberKey);
+            params.delete('clear_remember');
+            window.history.replaceState(null, '', window.location.pathname + window.location.search);
+        } else if (token) {
+            localStorage.setItem(rememberKey, token);
+            params.delete('remember_token');
+            window.history.replaceState(null, '', window.location.pathname + window.location.search);
+        } else {
+            const stored = localStorage.getItem(rememberKey);
+            if (stored) {
+                params.set('remember_token', stored);
+                window.location.replace(window.location.pathname + '?' + params.toString());
+            }
+        }
+    </script>
+    """
+    st.components.v1.html(js, height=0)
+
 
 def add_transaction(usuario, tipo, valor, descricao):
     with get_db_connection() as conn:
@@ -322,6 +356,7 @@ def meu_banco_digital():
 
     if not st.session_state.logado:
         try_auto_login()
+        remember_me_client_script()
         col_cen, col_box, col_dir = st.columns([1, 2, 1])
         with col_box:
             st.markdown("### 🔒 Controle de Acesso")
@@ -337,10 +372,10 @@ def meu_banco_digital():
                         st.session_state.usuario_atual = u_input
                         if remember_me:
                             token = set_remember_token(u_input)
-                            st.query_params = {"user": [u_input], "token": [token]}
+                            st.query_params = {"remember_token": [token]}
                         else:
                             clear_remember_token(u_input)
-                            st.query_params = {}
+                            st.query_params = {"clear_remember": ["1"]}
                         st.success("Login realizado com sucesso!")
                         st.rerun()
                     else:
@@ -377,7 +412,7 @@ def meu_banco_digital():
         if st.sidebar.button("Sair do Sistema"):
             st.session_state.logado = False
             st.session_state.usuario_atual = None
-            st.query_params = {}
+            st.query_params = {"clear_remember": ["1"]}
             st.rerun()
 
         if dados_user["role"] == "desenvolvedor":
