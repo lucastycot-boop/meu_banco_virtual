@@ -1,4 +1,5 @@
 import sqlite3
+import secrets
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -74,6 +75,10 @@ def init_database():
             )
             """
         )
+        cursor = conn.execute("PRAGMA table_info(contas)").fetchall()
+        columns = [row[1] for row in cursor]
+        if "remember_token" not in columns:
+            conn.execute("ALTER TABLE contas ADD COLUMN remember_token TEXT")
         conn.execute(
             """
             INSERT OR IGNORE INTO contas (usuario, senha, role, ganhos, gastos, limite_emprestimo, divida_emprestimo)
@@ -109,6 +114,24 @@ def update_user_in_db(usuario, **fields):
     values = list(fields.values()) + [usuario]
     with get_db_connection() as conn:
         conn.execute(f"UPDATE contas SET {assignments} WHERE usuario = ?", values)
+
+def set_remember_token(usuario, token=None):
+    token = token or secrets.token_urlsafe(16)
+    update_user_in_db(usuario, remember_token=token)
+    return token
+
+def clear_remember_token(usuario):
+    update_user_in_db(usuario, remember_token=None)
+
+def try_auto_login():
+    params = st.experimental_get_query_params()
+    user = params.get("user", [None])[0]
+    token = params.get("token", [None])[0]
+    if user and token and not st.session_state.logado:
+        dados = fetch_user(user)
+        if dados and dados.get("remember_token") == token:
+            st.session_state.logado = True
+            st.session_state.usuario_atual = user
 
 def add_transaction(usuario, tipo, valor, descricao):
     with get_db_connection() as conn:
@@ -298,6 +321,7 @@ def meu_banco_digital():
         st.session_state.limite_padrao = 2000.0
 
     if not st.session_state.logado:
+        try_auto_login()
         col_cen, col_box, col_dir = st.columns([1, 2, 1])
         with col_box:
             st.markdown("### 🔒 Controle de Acesso")
@@ -306,10 +330,17 @@ def meu_banco_digital():
             with aba_login:
                 u_input = st.text_input("Usuário", key="l_user").strip()
                 s_input = st.text_input("Senha", type="password", key="l_pass").strip()
+                remember_me = st.checkbox("Lembrar-me neste dispositivo", value=True, key="remember_me")
                 if st.button("Acessar Banco", use_container_width=True, type="primary", key="btn_executar_login"):
                     if authenticate_user(u_input, s_input):
                         st.session_state.logado = True
                         st.session_state.usuario_atual = u_input
+                        if remember_me:
+                            token = set_remember_token(u_input)
+                            st.experimental_set_query_params(user=u_input, token=token)
+                        else:
+                            clear_remember_token(u_input)
+                            st.experimental_set_query_params()
                         st.success("Login realizado com sucesso!")
                         st.rerun()
                     else:
@@ -346,6 +377,7 @@ def meu_banco_digital():
         if st.sidebar.button("Sair do Sistema"):
             st.session_state.logado = False
             st.session_state.usuario_atual = None
+            st.experimental_set_query_params()
             st.rerun()
 
         if dados_user["role"] == "desenvolvedor":
