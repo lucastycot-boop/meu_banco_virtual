@@ -153,6 +153,19 @@ def delete_loan(loan_id):
     with get_db_connection() as conn:
         conn.execute("DELETE FROM emprestimos WHERE id = ?", (loan_id,))
 
+def credit_developer_interest(valor_juros):
+    if valor_juros <= 0:
+        return
+    with get_db_connection() as conn:
+        conn.execute(
+            "UPDATE contas SET ganhos = ganhos + ? WHERE role = 'desenvolvedor'",
+            (valor_juros,)
+        )
+        conn.execute(
+            "INSERT INTO transacoes (usuario, tipo, valor, descricao, data_hora) VALUES (?, ?, ?, ?, ?)",
+            ("Lucas", "Ganho", valor_juros, "Juros de Empréstimo", datetime.now().isoformat()),
+        )
+
 # Função auxiliar para avançar os meses nas datas de vencimento
 def adicionar_meses(data_base, meses):
     ano = data_base.year + (data_base.month + meses - 1) // 12
@@ -236,31 +249,14 @@ def meu_banco_digital():
         if dados_user["role"] == "desenvolvedor":
             st.sidebar.success("⚡ Administrador Ativo")
             st.header("🛠️ Painel de Controle Admin")
+            saldo_desenvolvedor = dados_user["ganhos"] - dados_user["gastos"]
+            st.metric("💼 Saldo do Desenvolvedor", f"R$ {saldo_desenvolvedor:,.2f}")
 
             tab_usuarios, tab_transacoes_adm, tab_emprestimos_adm = st.tabs(["👥 Gerenciar Clientes", "📊 Extrato Geral", "🏦 Créditos Ativos"])
 
             with tab_usuarios:
                 st.markdown("##### Todos os Usuários Registrados")
                 st.dataframe(df_users, use_container_width=True)
-
-                st.markdown("#### ➕ Adicionar Novo Cliente")
-                with st.form(key="form_adicionar_cliente"):
-                    novo_usuario = st.text_input("Nome de Usuário", key="adm_novo_user").strip()
-                    nova_senha = st.text_input("Senha", type="password", key="adm_nova_senha").strip()
-                    confirm_senha = st.text_input("Confirmar Senha", type="password", key="adm_confirma_senha").strip()
-                    novo_limite_usuario = st.number_input("Limite de Empréstimo Inicial", min_value=0.0, step=100.0, value=st.session_state.limite_padrao, key="adm_limite_inicial")
-                    submit_novo = st.form_submit_button("Criar Conta de Cliente")
-                    if submit_novo:
-                        if not novo_usuario or not nova_senha:
-                            st.warning("Preencha usuário e senha.")
-                        elif fetch_user(novo_usuario):
-                            st.error("Este usuário já existe.")
-                        elif nova_senha != confirm_senha:
-                            st.error("As senhas não conferem.")
-                        else:
-                            create_user_in_db(novo_usuario, nova_senha, "usuario", novo_limite_usuario)
-                            st.success("Conta de cliente criada com sucesso!")
-                            st.rerun()
 
                 st.markdown("#### ⚙️ Alterar Limite de Crédito")
                 lista_clientes = df_users[df_users["role"] != "desenvolvedor"]["usuario"].tolist()
@@ -449,6 +445,8 @@ def meu_banco_digital():
                         )
                         create_loan_in_db(user, v_sol, total_final_escolhido, int(p_sol))
                         add_transaction(user, "Empréstimo", v_sol, f"Empréstimo em {p_sol}x")
+                        juros_aplicados = total_final_escolhido - float(v_sol)
+                        credit_developer_interest(juros_aplicados)
                         st.success("Crédito liberado e salvo permanentemente!")
                         st.rerun()
 
