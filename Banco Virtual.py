@@ -198,6 +198,23 @@ def remember_me_client_script():
     st.components.v1.html(js, height=0)
 
 
+def send_token_to_client(token):
+    # Envia token diretamente ao cliente via script, sem expor o token na URL do servidor
+    safe_js = f"""
+    <script>
+        try {{
+            localStorage.setItem('apex_remember_token', '{token}');
+            const params = new URLSearchParams(window.location.search);
+            params.delete('remember_token');
+            params.delete('clear_remember');
+            window.history.replaceState(null, '', window.location.pathname + (params.toString() ? ('?' + params.toString()) : ''));
+            window.location.reload();
+        }} catch(e) {{ console.error(e); }}
+    </script>
+    """
+    st.components.v1.html(safe_js, height=0)
+
+
 def add_transaction(usuario, tipo, valor, descricao):
     with get_db_connection() as conn:
         conn.execute(
@@ -425,7 +442,7 @@ def meu_banco_digital():
                             st.session_state.usuario_atual = u_input
                             if remember_me:
                                 token = set_remember_token(u_input)
-                                st.query_params = {"remember_token": [token]}
+                                send_token_to_client(token)
                             else:
                                 clear_remember_token(u_input)
                                 st.query_params = {"clear_remember": ["1"]}
