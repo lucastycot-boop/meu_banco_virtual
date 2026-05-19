@@ -79,6 +79,18 @@ def init_database():
         columns = [row[1] for row in cursor]
         if "remember_token" not in columns:
             conn.execute("ALTER TABLE contas ADD COLUMN remember_token TEXT")
+        # Tabela de tokens por dispositivo para lembrar usuários sem sobrescrever outros dispositivos
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS remember_tokens (
+                token TEXT PRIMARY KEY,
+                usuario TEXT NOT NULL,
+                device_info TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(usuario) REFERENCES contas(usuario)
+            )
+            """
+        )
         conn.execute(
             """
             INSERT OR IGNORE INTO contas (usuario, senha, role, ganhos, gastos, limite_emprestimo, divida_emprestimo)
@@ -116,17 +128,35 @@ def update_user_in_db(usuario, **fields):
         conn.execute(f"UPDATE contas SET {assignments} WHERE usuario = ?", values)
 
 def set_remember_token(usuario, token=None):
-    token = token or secrets.token_urlsafe(16)
-    update_user_in_db(usuario, remember_token=token)
+    # Gera um token único por dispositivo e armazena em tabela separada
+    token = token or secrets.token_urlsafe(24)
+    with get_db_connection() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO remember_tokens (token, usuario, device_info, created_at) VALUES (?, ?, ?, ?)",
+            (token, usuario, None, datetime.now().isoformat()),
+        )
     return token
 
 def clear_remember_token(usuario):
-    update_user_in_db(usuario, remember_token=None)
+    # Remove todos os tokens associados ao usuário (logout global)
+    with get_db_connection() as conn:
+        conn.execute("DELETE FROM remember_tokens WHERE usuario = ?", (usuario,))
 
 def fetch_user_by_token(token):
     with get_db_connection() as conn:
-        row = conn.execute("SELECT * FROM contas WHERE remember_token = ?", (token,)).fetchone()
+        row = conn.execute(
+            "SELECT c.* FROM contas c JOIN remember_tokens r ON c.usuario = r.usuario WHERE r.token = ?",
+            (token,),
+        ).fetchone()
     return dict(row) if row else None
+
+def delete_remember_token(token):
+    with get_db_connection() as conn:
+        conn.execute("DELETE FROM remember_tokens WHERE token = ?", (token,))
+
+def delete_remember_tokens_for_user(usuario):
+    with get_db_connection() as conn:
+        conn.execute("DELETE FROM remember_tokens WHERE usuario = ?", (usuario,))
 
 
 def try_auto_login():
@@ -137,6 +167,7 @@ def try_auto_login():
         dados = fetch_user_by_token(token)
         if dados:
             st.session_state.pending_auto_user = dados["usuario"]
+            st.session_state.pending_auto_token = token
 
 
 def remember_me_client_script():
@@ -372,13 +403,17 @@ def meu_banco_digital():
                         st.session_state.logado = True
                         st.session_state.usuario_atual = pending
                         st.session_state.pop("pending_auto_user", None)
+                        st.session_state.pop("pending_auto_token", None)
                         st.success("Login realizado via lembrete.")
                         st.rerun()
                     if col_no.button("Não é minha conta / Remover lembrete"):
-                        clear_remember_token(pending)
+                        # Removemos apenas o token pendente (dispositivo atual)
+                        if "pending_auto_token" in st.session_state:
+                            delete_remember_token(st.session_state.pending_auto_token)
                         st.query_params = {"clear_remember": ["1"]}
                         st.session_state.pop("pending_auto_user", None)
-                        st.info("Token de lembrete removido. Faça login manualmente.")
+                        st.session_state.pop("pending_auto_token", None)
+                        st.info("Token de lembrete removido deste dispositivo. Faça login manualmente.")
                         st.rerun()
                 else:
                     u_input = st.text_input("Usuário", key="l_user").strip()
