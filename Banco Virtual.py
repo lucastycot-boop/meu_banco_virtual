@@ -162,12 +162,13 @@ def delete_remember_tokens_for_user(usuario):
 def try_auto_login():
     params = st.query_params
     token = params.get("remember_token", [None])[0]
-    # Ao invés de logar automaticamente, sinalizamos um "pending" para o usuário confirmar
-    if token and not st.session_state.logado and "pending_auto_user" not in st.session_state:
+    # Auto-login imediato apenas quando o token for apresentado pelo cliente (localStorage)
+    if token and not st.session_state.logado:
         dados = fetch_user_by_token(token)
         if dados:
-            st.session_state.pending_auto_user = dados["usuario"]
-            st.session_state.pending_auto_token = token
+            st.session_state.logado = True
+            st.session_state.usuario_atual = dados["usuario"]
+            st.experimental_rerun()
 
 
 def remember_me_client_script():
@@ -193,6 +194,22 @@ def remember_me_client_script():
                 window.location.replace(window.location.pathname + '?' + params.toString());
             }
         }
+    </script>
+    """
+    st.components.v1.html(js, height=0)
+
+
+def send_clear_remember_to_client():
+    js = """
+    <script>
+        try {
+            localStorage.removeItem('apex_remember_token');
+            const params = new URLSearchParams(window.location.search);
+            params.delete('remember_token');
+            params.delete('clear_remember');
+            window.history.replaceState(null, '', window.location.pathname + (params.toString() ? ('?' + params.toString()) : ''));
+            window.location.reload();
+        } catch(e) { console.error(e); }
     </script>
     """
     st.components.v1.html(js, height=0)
@@ -411,45 +428,23 @@ def meu_banco_digital():
             aba_login, aba_cadastro = st.tabs(["🔑 Entrar", "📝 Criar Nova Conta"])
 
             with aba_login:
-                # Se há um token pendente vindo do cliente, pedimos confirmação ao usuário
-                if "pending_auto_user" in st.session_state:
-                    pending = st.session_state.pending_auto_user
-                    st.info(f"Detectado lembrete para '{pending}'. Deseja entrar automaticamente neste dispositivo?")
-                    col_yes, col_no = st.columns(2)
-                    if col_yes.button(f"Entrar como {pending}"):
+                u_input = st.text_input("Usuário", key="l_user").strip()
+                s_input = st.text_input("Senha", type="password", key="l_pass").strip()
+                remember_me = st.checkbox("Lembrar-me neste dispositivo", value=True, key="remember_me")
+                if st.button("Acessar Banco", use_container_width=True, type="primary", key="btn_executar_login"):
+                    if authenticate_user(u_input, s_input):
                         st.session_state.logado = True
-                        st.session_state.usuario_atual = pending
-                        st.session_state.pop("pending_auto_user", None)
-                        st.session_state.pop("pending_auto_token", None)
-                        st.success("Login realizado via lembrete.")
-                        st.rerun()
-                    if col_no.button("Não é minha conta / Remover lembrete"):
-                        # Removemos apenas o token pendente (dispositivo atual)
-                        if "pending_auto_token" in st.session_state:
-                            delete_remember_token(st.session_state.pending_auto_token)
-                        st.query_params = {"clear_remember": ["1"]}
-                        st.session_state.pop("pending_auto_user", None)
-                        st.session_state.pop("pending_auto_token", None)
-                        st.info("Token de lembrete removido deste dispositivo. Faça login manualmente.")
-                        st.rerun()
-                else:
-                    u_input = st.text_input("Usuário", key="l_user").strip()
-                    s_input = st.text_input("Senha", type="password", key="l_pass").strip()
-                    remember_me = st.checkbox("Lembrar-me neste dispositivo", value=True, key="remember_me")
-                    if st.button("Acessar Banco", use_container_width=True, type="primary", key="btn_executar_login"):
-                        if authenticate_user(u_input, s_input):
-                            st.session_state.logado = True
-                            st.session_state.usuario_atual = u_input
-                            if remember_me:
-                                token = set_remember_token(u_input)
-                                send_token_to_client(token)
-                            else:
-                                clear_remember_token(u_input)
-                                st.query_params = {"clear_remember": ["1"]}
-                            st.success("Login realizado com sucesso!")
-                            st.rerun()
+                        st.session_state.usuario_atual = u_input
+                        if remember_me:
+                            token = set_remember_token(u_input)
+                            send_token_to_client(token)
                         else:
-                            st.error("Usuário ou senha incorretos!")
+                            clear_remember_token(u_input)
+                            send_clear_remember_to_client()
+                        st.success("Login realizado com sucesso!")
+                        st.rerun()
+                    else:
+                        st.error("Usuário ou senha incorretos!")
 
             with aba_cadastro:
                 n_user = st.text_input("Nome de Usuário", key="c_user").strip()
@@ -482,7 +477,7 @@ def meu_banco_digital():
         if st.sidebar.button("Sair do Sistema"):
             st.session_state.logado = False
             st.session_state.usuario_atual = None
-            st.query_params = {"clear_remember": ["1"]}
+            send_clear_remember_to_client()
             st.rerun()
 
         if dados_user["role"] == "desenvolvedor":
