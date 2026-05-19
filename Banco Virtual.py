@@ -132,11 +132,11 @@ def fetch_user_by_token(token):
 def try_auto_login():
     params = st.query_params
     token = params.get("remember_token", [None])[0]
-    if token and not st.session_state.logado:
+    # Ao invés de logar automaticamente, sinalizamos um "pending" para o usuário confirmar
+    if token and not st.session_state.logado and "pending_auto_user" not in st.session_state:
         dados = fetch_user_by_token(token)
         if dados:
-            st.session_state.logado = True
-            st.session_state.usuario_atual = dados["usuario"]
+            st.session_state.pending_auto_user = dados["usuario"]
 
 
 def remember_me_client_script():
@@ -363,23 +363,41 @@ def meu_banco_digital():
             aba_login, aba_cadastro = st.tabs(["🔑 Entrar", "📝 Criar Nova Conta"])
 
             with aba_login:
-                u_input = st.text_input("Usuário", key="l_user").strip()
-                s_input = st.text_input("Senha", type="password", key="l_pass").strip()
-                remember_me = st.checkbox("Lembrar-me neste dispositivo", value=True, key="remember_me")
-                if st.button("Acessar Banco", use_container_width=True, type="primary", key="btn_executar_login"):
-                    if authenticate_user(u_input, s_input):
+                # Se há um token pendente vindo do cliente, pedimos confirmação ao usuário
+                if "pending_auto_user" in st.session_state:
+                    pending = st.session_state.pending_auto_user
+                    st.info(f"Detectado lembrete para '{pending}'. Deseja entrar automaticamente neste dispositivo?")
+                    col_yes, col_no = st.columns(2)
+                    if col_yes.button(f"Entrar como {pending}"):
                         st.session_state.logado = True
-                        st.session_state.usuario_atual = u_input
-                        if remember_me:
-                            token = set_remember_token(u_input)
-                            st.query_params = {"remember_token": [token]}
-                        else:
-                            clear_remember_token(u_input)
-                            st.query_params = {"clear_remember": ["1"]}
-                        st.success("Login realizado com sucesso!")
+                        st.session_state.usuario_atual = pending
+                        st.session_state.pop("pending_auto_user", None)
+                        st.success("Login realizado via lembrete.")
                         st.rerun()
-                    else:
-                        st.error("Usuário ou senha incorretos!")
+                    if col_no.button("Não é minha conta / Remover lembrete"):
+                        clear_remember_token(pending)
+                        st.query_params = {"clear_remember": ["1"]}
+                        st.session_state.pop("pending_auto_user", None)
+                        st.info("Token de lembrete removido. Faça login manualmente.")
+                        st.rerun()
+                else:
+                    u_input = st.text_input("Usuário", key="l_user").strip()
+                    s_input = st.text_input("Senha", type="password", key="l_pass").strip()
+                    remember_me = st.checkbox("Lembrar-me neste dispositivo", value=True, key="remember_me")
+                    if st.button("Acessar Banco", use_container_width=True, type="primary", key="btn_executar_login"):
+                        if authenticate_user(u_input, s_input):
+                            st.session_state.logado = True
+                            st.session_state.usuario_atual = u_input
+                            if remember_me:
+                                token = set_remember_token(u_input)
+                                st.query_params = {"remember_token": [token]}
+                            else:
+                                clear_remember_token(u_input)
+                                st.query_params = {"clear_remember": ["1"]}
+                            st.success("Login realizado com sucesso!")
+                            st.rerun()
+                        else:
+                            st.error("Usuário ou senha incorretos!")
 
             with aba_cadastro:
                 n_user = st.text_input("Nome de Usuário", key="c_user").strip()
