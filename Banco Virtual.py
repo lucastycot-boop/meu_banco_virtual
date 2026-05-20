@@ -287,7 +287,7 @@ def formatar_data_br(data_iso):
 
 def meu_banco_digital():
     init_database()
-    st.set_page_config(page_title="Banco Ilha do Governador", page_icon="🏦", layout="wide")
+    st.set_page_config(page_title= "Banco Ilha do Governador", page_icon="🏦", layout="wide")
     st.title("🏦 Banco | Ilha do Governador")
 
     if "logado" not in st.session_state:
