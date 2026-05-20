@@ -295,7 +295,7 @@ def meu_banco_digital():
     if "usuario_atual" not in st.session_state:
         st.session_state.usuario_atual = None
     if "limite_padrao" not in st.session_state:
-        st.session_state.limite_padrao = 2000.0
+        st.session_state.limite_padrao = 100.0
 
     if not st.session_state.logado:
         col_cen, col_box, col_dir = st.columns([1, 2, 1])
