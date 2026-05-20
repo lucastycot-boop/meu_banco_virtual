@@ -1,6 +1,5 @@
 import sqlite3
-import secrets
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -75,22 +74,6 @@ def init_database():
             )
             """
         )
-        cursor = conn.execute("PRAGMA table_info(contas)").fetchall()
-        columns = [row[1] for row in cursor]
-        if "remember_token" not in columns:
-            conn.execute("ALTER TABLE contas ADD COLUMN remember_token TEXT")
-        # Tabela de tokens por dispositivo para lembrar usuários sem sobrescrever outros dispositivos
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS remember_tokens (
-                token TEXT PRIMARY KEY,
-                usuario TEXT NOT NULL,
-                device_info TEXT,
-                created_at TEXT NOT NULL,
-                FOREIGN KEY(usuario) REFERENCES contas(usuario)
-            )
-            """
-        )
         conn.execute(
             """
             INSERT OR IGNORE INTO contas (usuario, senha, role, ganhos, gastos, limite_emprestimo, divida_emprestimo)
@@ -126,111 +109,6 @@ def update_user_in_db(usuario, **fields):
     values = list(fields.values()) + [usuario]
     with get_db_connection() as conn:
         conn.execute(f"UPDATE contas SET {assignments} WHERE usuario = ?", values)
-
-def set_remember_token(usuario, token=None):
-    # Gera um token único por dispositivo e armazena em tabela separada
-    token = token or secrets.token_urlsafe(24)
-    with get_db_connection() as conn:
-        conn.execute(
-            "INSERT OR REPLACE INTO remember_tokens (token, usuario, device_info, created_at) VALUES (?, ?, ?, ?)",
-            (token, usuario, None, datetime.now().isoformat()),
-        )
-    return token
-
-def clear_remember_token(usuario):
-    # Remove todos os tokens associados ao usuário (logout global)
-    with get_db_connection() as conn:
-        conn.execute("DELETE FROM remember_tokens WHERE usuario = ?", (usuario,))
-
-def fetch_user_by_token(token):
-    with get_db_connection() as conn:
-        row = conn.execute(
-            "SELECT c.* FROM contas c JOIN remember_tokens r ON c.usuario = r.usuario WHERE r.token = ?",
-            (token,),
-        ).fetchone()
-    return dict(row) if row else None
-
-def delete_remember_token(token):
-    with get_db_connection() as conn:
-        conn.execute("DELETE FROM remember_tokens WHERE token = ?", (token,))
-
-def delete_remember_tokens_for_user(usuario):
-    with get_db_connection() as conn:
-        conn.execute("DELETE FROM remember_tokens WHERE usuario = ?", (usuario,))
-
-
-def try_auto_login():
-    params = st.query_params
-    token = params.get("remember_token", [None])[0]
-    # Auto-login imediato apenas quando o token for apresentado pelo cliente (localStorage)
-    if token and not st.session_state.logado:
-        dados = fetch_user_by_token(token)
-        if dados:
-            st.session_state.logado = True
-            st.session_state.usuario_atual = dados["usuario"]
-            st.experimental_rerun()
-
-
-def remember_me_client_script():
-    js = """
-    <script>
-        const params = new URLSearchParams(window.location.search);
-        const rememberKey = 'apex_remember_token';
-        const token = params.get('remember_token');
-        const clear = params.get('clear_remember');
-
-        if (clear === '1') {
-            localStorage.removeItem(rememberKey);
-            params.delete('clear_remember');
-            window.history.replaceState(null, '', window.location.pathname + window.location.search);
-        } else if (token) {
-            localStorage.setItem(rememberKey, token);
-            params.delete('remember_token');
-            window.history.replaceState(null, '', window.location.pathname + window.location.search);
-        } else {
-            const stored = localStorage.getItem(rememberKey);
-            if (stored) {
-                params.set('remember_token', stored);
-                window.location.replace(window.location.pathname + '?' + params.toString());
-            }
-        }
-    </script>
-    """
-    st.components.v1.html(js, height=0)
-
-
-def send_clear_remember_to_client():
-    js = """
-    <script>
-        try {
-            localStorage.removeItem('apex_remember_token');
-            const params = new URLSearchParams(window.location.search);
-            params.delete('remember_token');
-            params.delete('clear_remember');
-            window.history.replaceState(null, '', window.location.pathname + (params.toString() ? ('?' + params.toString()) : ''));
-            window.location.reload();
-        } catch(e) { console.error(e); }
-    </script>
-    """
-    st.components.v1.html(js, height=0)
-
-
-def send_token_to_client(token):
-    # Envia token diretamente ao cliente via script, sem expor o token na URL do servidor
-    safe_js = f"""
-    <script>
-        try {{
-            localStorage.setItem('apex_remember_token', '{token}');
-            const params = new URLSearchParams(window.location.search);
-            params.delete('remember_token');
-            params.delete('clear_remember');
-            window.history.replaceState(null, '', window.location.pathname + (params.toString() ? ('?' + params.toString()) : ''));
-            window.location.reload();
-        }} catch(e) {{ console.error(e); }}
-    </script>
-    """
-    st.components.v1.html(safe_js, height=0)
-
 
 def add_transaction(usuario, tipo, valor, descricao):
     with get_db_connection() as conn:
@@ -409,8 +287,8 @@ def formatar_data_br(data_iso):
 
 def meu_banco_digital():
     init_database()
-    st.set_page_config(page_title="Apex Banco Digital", page_icon="🔱", layout="wide")
-    st.title("🔱 Apex | Sistema Bancário Inteligente")
+    st.set_page_config(page_title="Banco Ilha do Governador", page_icon="🏦", layout="wide")
+    st.title("🏦 Banco | Sistema Bancário")
 
     if "logado" not in st.session_state:
         st.session_state.logado = False
@@ -420,8 +298,6 @@ def meu_banco_digital():
         st.session_state.limite_padrao = 2000.0
 
     if not st.session_state.logado:
-        try_auto_login()
-        remember_me_client_script()
         col_cen, col_box, col_dir = st.columns([1, 2, 1])
         with col_box:
             st.markdown("### 🔒 Controle de Acesso")
@@ -435,27 +311,10 @@ def meu_banco_digital():
                     if authenticate_user(u_input, s_input):
                         st.session_state.logado = True
                         st.session_state.usuario_atual = u_input
-                        token = set_remember_token(u_input)
-                        send_token_to_client(token)
-                        st.success("Login realizado com sucesso! Este dispositivo será lembrado automaticamente.")
+                        st.success("Login realizado com sucesso!")
                         st.rerun()
                     else:
                         st.error("Usuário ou senha incorretos!")
-
-                st.markdown("---")
-                st.markdown("#### Login Automático")
-                st.info("Cada usuário que fizer login será lembrado automaticamente neste dispositivo.")
-                if st.button("Entrar automaticamente como Lucas", use_container_width=True, key="btn_auto_login"):
-                    auto_user = "Lucas"
-                    if fetch_user(auto_user):
-                        st.session_state.logado = True
-                        st.session_state.usuario_atual = auto_user
-                        token = set_remember_token(auto_user)
-                        send_token_to_client(token)
-                        st.success("Login automático realizado com sucesso!")
-                        st.rerun()
-                    else:
-                        st.error("Conta automática não encontrada. Crie a conta primeiro.")
 
             with aba_cadastro:
                 n_user = st.text_input("Nome de Usuário", key="c_user").strip()
@@ -488,7 +347,6 @@ def meu_banco_digital():
         if st.sidebar.button("Sair do Sistema"):
             st.session_state.logado = False
             st.session_state.usuario_atual = None
-            send_clear_remember_to_client()
             st.rerun()
 
         if dados_user["role"] == "desenvolvedor":
