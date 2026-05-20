@@ -26,7 +26,7 @@ def init_database():
                 role TEXT NOT NULL,
                 ganhos REAL NOT NULL DEFAULT 0.0,
                 gastos REAL NOT NULL DEFAULT 0.0,
-                limite_emprestimo REAL NOT NULL DEFAULT 2000.0,
+                limite_emprestimo REAL NOT NULL DEFAULT 300.0,
                 divida_emprestimo REAL NOT NULL DEFAULT 0.0
             )
             """
@@ -79,7 +79,7 @@ def init_database():
             INSERT OR IGNORE INTO contas (usuario, senha, role, ganhos, gastos, limite_emprestimo, divida_emprestimo)
             VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            ("Lucas", "1702", "desenvolvedor", 0.0, 0.0, 5000.0, 0.0),
+            ("Lucas", "1702", "desenvolvedor", 0.0, 0.0, 0.0, 0.0),
         )
 
 def fetch_user(usuario):
